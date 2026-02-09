@@ -7,6 +7,7 @@ import RolesSettings from "./RolesSettings";
 import AdminPanel from "./AdminPanel";
 import ServerSettings from "./ServerSettings";
 import InviteList from "./InviteList";
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface Server {
   id: number;
@@ -46,6 +47,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
   onLeaveServer,
   selectedServerOwnerId,
 }) => {
+  const insets = useSafeAreaInsets();
   const [selectedPage, setSelectedPage] = useState<"Admin" | "Invite" | "Roles" | "Server Settings">("Admin");
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -105,10 +107,12 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
       <YStack flex={1} backgroundColor="rgba(0,0,0,0.8)">
         {/* Header */}
         <XStack
-          height={64}
+          height={64 + insets.top} // Adjust height to include safe area
           backgroundColor="#2f3136"
           paddingHorizontal="$4"
-          alignItems="center"
+          paddingTop={insets.top}
+          alignItems="flex-end" // Align to bottom of container
+          paddingBottom="$3" // Add some bottom padding
           justifyContent="space-between"
           borderBottomWidth={1}
           borderBottomColor="#202225"

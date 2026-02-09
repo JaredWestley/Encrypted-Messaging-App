@@ -4,6 +4,7 @@ import { Modal, TouchableOpacity, Image, Alert as RNAlert } from "react-native";
 import { X } from "@tamagui/lucide-icons";
 import * as ImagePicker from "expo-image-picker";
 import { updateUserSettings, fetchCurrentUser, uploadUserIcon } from "../../utils/api";
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface UserSettingsDialogProps {
   open: boolean;
@@ -20,6 +21,7 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
   token,
   logout,
 }) => {
+  const insets = useSafeAreaInsets();
   const [currentUsername, setCurrentUsername] = useState("");
   const [currentEmail, setCurrentEmail] = useState("");
   const [changeDialogOpen, setChangeDialogOpen] = useState<ChangeType>(null);
@@ -191,10 +193,12 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
       <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
         <YStack flex={1} backgroundColor="rgba(0,0,0,0.8)">
           <XStack
-            height={64}
+            height={64 + insets.top} // Adjust height to include safe area
             backgroundColor="#2f3136"
             paddingHorizontal="$4"
-            alignItems="center"
+            paddingTop={insets.top}
+            alignItems="flex-end" // Align to bottom of container
+            paddingBottom="$3" // Add some bottom padding
             justifyContent="space-between"
           >
             <Text fontSize="$6" fontWeight="700" color="white">
@@ -205,7 +209,14 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
             </TouchableOpacity>
           </XStack>
 
-          <ScrollView flex={1} backgroundColor="#36393f" padding="$4">
+          <ScrollView 
+            flex={1} 
+            backgroundColor="#36393f" 
+            padding="$4"
+            contentContainerStyle={{
+              paddingBottom: insets.bottom + 20 // Add bottom safe area padding
+            }}
+          >
             <YStack paddingTop="$2">
               <YStack>
                 <Text fontWeight="700" color="white" marginBottom="$1">

@@ -11,10 +11,10 @@ import {
 } from "tamagui";
 import { Alert, KeyboardAvoidingView, Platform } from "react-native";
 import { User, Lock, Eye, EyeOff } from "@tamagui/lucide-icons";
-import { useNavigation } from "@react-navigation/native";
 import { loginUser } from "../utils/api";
 import { useAuth } from "../utils/AuthContext";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { Redirect, useRouter } from 'expo-router';
 
 type RootStackParamList = {
   Login: undefined;
@@ -25,7 +25,7 @@ type RootStackParamList = {
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const LoginPage: React.FC = () => {
-  const navigation = useNavigation<NavigationProp>();
+  const router = useRouter();
   const { login } = useAuth();
 
   const [username, setUsername] = useState("");
@@ -45,7 +45,7 @@ const LoginPage: React.FC = () => {
     try {
       const data = await loginUser(username.trim(), password);
       login(data.access_token, data.username, data.userId);
-      navigation.navigate("Chat");
+      router.replace("/pages/Chat");
     } catch {
       setError("Invalid username or password.");
     } finally {
@@ -221,7 +221,7 @@ const LoginPage: React.FC = () => {
                   color="#5865F2"
                   fontWeight="700"
                   fontSize="$3"
-                  onPress={() => navigation.navigate("Register")}
+                  onPress={() => router.push("/(tabs)/pages/Register")}
                   pressStyle={{
                     opacity: 0.7,
                   }}

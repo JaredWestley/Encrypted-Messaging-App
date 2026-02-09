@@ -970,7 +970,7 @@ def login(user: LoginRequest, session: Session = Depends(get_session)):
         expires_delta=access_token_expires
     )
 
-    return {"access_token": access_token, "token_type": "bearer", "userId": db_user.id}
+    return {"access_token": access_token, "token_type": "bearer", "userId": db_user.id, "username": db_user.username}
 
 @router.get("/users/me", response_model=UserRead)
 def get_current_user_info(current_user: User = Depends(get_current_user)):

@@ -1,7 +1,12 @@
-import { registerRootComponent } from 'expo';
-import App from './App';
+import { Redirect } from 'expo-router';
+import { useAuth } from './utils/AuthContext';
 
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
-registerRootComponent(App);
+export default function Index() {
+  const { token } = useAuth();
+  
+  if (token) {
+    return <Redirect href="/App" />;
+  }
+  
+  return <Redirect href="/pages/Login" />;
+}

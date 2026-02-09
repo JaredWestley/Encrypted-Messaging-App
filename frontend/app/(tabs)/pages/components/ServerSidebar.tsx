@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { YStack, XStack, Text, Button, ScrollView, Input, Card, Avatar } from "tamagui";
-import { TouchableOpacity, Modal, Alert as RNAlert, Image } from "react-native";
-import { Plus, Settings } from "@tamagui/lucide-icons";
+import { YStack, XStack, Text, Button, ScrollView, Input, Card, Avatar, Separator } from "tamagui";
+import { TouchableOpacity, Modal, Alert as RNAlert, Image, useWindowDimensions } from "react-native";
+import { Plus, Settings, X } from "@tamagui/lucide-icons";
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createServer, fetchServers, joinServerWithInvite } from "../../utils/api";
 import { useAuth } from "../../utils/AuthContext";
 import UserSettingsDialog from "./UserSettingsDialog";
@@ -20,6 +21,7 @@ interface ServerSidebarProps {
   setServers: React.Dispatch<React.SetStateAction<Server[]>>;
   token: string;
   setError: (error: string | null) => void;
+  logout: () => void;
 }
 
 const ServerSidebar: React.FC<ServerSidebarProps> = ({
@@ -29,8 +31,12 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
   setServers,
   token,
   setError,
+  logout,
 }) => {
-  const { logout } = useAuth();
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const isMobile = width < 600;
+  
   const [modalVisible, setModalVisible] = useState(false);
   const [newServerName, setNewServerName] = useState("");
   const [inviteUrl, setInviteUrl] = useState("");
@@ -55,6 +61,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
       setModalVisible(false);
       setNewServerName("");
       setInviteUrl("");
+      showSnackbar("Server created successfully!");
     } catch (error: any) {
       setError(error.message || "Error creating server");
     }
@@ -122,72 +129,203 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
     return "?";
   };
 
+  const baseUrl = "http://localhost:8000";
+
   return (
     <>
-      <YStack width={160} backgroundColor="#202225" height="100%">
+      <YStack 
+        width={isMobile ? "100%" : 72} 
+        backgroundColor="#202225" 
+        height="100%"
+      >
+        {/* Header - Mobile only */}
+        {isMobile && (
+          <YStack 
+            paddingHorizontal="$4" 
+            paddingVertical="$3"
+            borderBottomWidth={1}
+            borderBottomColor="#18191c"
+          >
+            <Text fontSize="$5" fontWeight="700" color="white">
+              Your Servers
+            </Text>
+          </YStack>
+        )}
+
         {/* Create Server Button */}
-        <YStack alignItems="center" paddingTop="$2">
+        <YStack alignItems="center" paddingTop={isMobile ? "$3" : "$2"} paddingHorizontal={isMobile ? "$4" : "$0"}>
           <Button
-            circular
-            size="$6"
+            circular={!isMobile}
+            size={isMobile ? "$4" : "$6"}
+            width={isMobile ? "100%" : undefined}
             backgroundColor="#5865F2"
             onPress={() => setModalVisible(true)}
-            icon={<Plus size={24} color="white" />}
+            icon={<Plus size={isMobile ? 20 : 24} color="white" />}
             pressStyle={{
               backgroundColor: "#4752C4",
             }}
-          />
+          >
+            {isMobile && "Add Server"}
+          </Button>
         </YStack>
 
         {/* Server List */}
-        <ScrollView flex={1} marginTop="$3" marginBottom={64}>
-          <YStack alignItems="center">
+        <ScrollView 
+          flex={1} 
+          marginTop="$3" 
+          marginBottom={isMobile ? 0 : 80}
+          contentContainerStyle={{
+            paddingHorizontal: isMobile ? 16 : 0,
+            paddingBottom: isMobile ? insets.bottom + 80 : 16
+          }}
+        >
+          <YStack alignItems={isMobile ? "stretch" : "center"} gap={isMobile ? "$2" : "$3"}>
             {servers.map((server) => (
-              <TouchableOpacity key={server.id} onPress={() => setSelectedServer(server)}>
-                <YStack
-                  width={56}
-                  height={56}
-                  borderRadius={28}
-                  backgroundColor={selectedServer?.id === server.id ? "#5865F2" : "transparent"}
-                  justifyContent="center"
-                  alignItems="center"
-                  pressStyle={{
-                    backgroundColor: "#4752C4",
-                  }}
-                >
-                  {server.icon_url ? (
-                    <Image
-                      source={{ uri: `http://localhost:8000${server.icon_url}` }}
-                      style={{ width: 40, height: 40, borderRadius: 20 }}
-                    />
-                  ) : (
-                    <Avatar circular size="$5" backgroundColor="#757575">
-                      <Avatar.Fallback backgroundColor="#757575">
-                        <Text color="white" fontSize="$4" fontWeight="700">
-                          {getFirstLetter(server.name)}
-                        </Text>
-                      </Avatar.Fallback>
-                    </Avatar>
-                  )}
-                </YStack>
+              <TouchableOpacity 
+                key={server.id} 
+                onPress={() => setSelectedServer(server)}
+                style={{ width: '100%' }}
+              >
+                {isMobile ? (
+                  // Mobile: Full-width list item
+                  <XStack
+                    backgroundColor={selectedServer?.id === server.id ? "#5865F2" : "#2f3136"}
+                    padding="$3"
+                    borderRadius="$3"
+                    alignItems="center"
+                    gap="$3"
+                    pressStyle={{
+                      backgroundColor: selectedServer?.id === server.id ? "#4752C4" : "#40444b",
+                    }}
+                  >
+                    {server.icon_url ? (
+                      <Image
+                        source={{ uri: `${baseUrl}${server.icon_url}` }}
+                        style={{ width: 48, height: 48, borderRadius: 24 }}
+                      />
+                    ) : (
+                      <Avatar circular size="$5" backgroundColor="#5865F2">
+                        <Avatar.Fallback backgroundColor="#5865F2">
+                          <Text color="white" fontSize="$5" fontWeight="700">
+                            {getFirstLetter(server.name)}
+                          </Text>
+                        </Avatar.Fallback>
+                      </Avatar>
+                    )}
+                    <YStack flex={1}>
+                      <Text 
+                        color="white" 
+                        fontSize="$4" 
+                        fontWeight="600"
+                        numberOfLines={1}
+                      >
+                        {server.name}
+                      </Text>
+                    </YStack>
+                  </XStack>
+                ) : (
+                  // Desktop: Circular icon
+                  <YStack
+                    width={56}
+                    height={56}
+                    borderRadius={selectedServer?.id === server.id ? 16 : 28} // Rounded square when selected
+                    backgroundColor={selectedServer?.id === server.id ? "#5865F2" : "#2f3136"} // Show background even when not selected
+                    justifyContent="center"
+                    alignItems="center"
+                    hoverStyle={{
+                      borderRadius: 16, // Rounded square on hover
+                    }}
+                    pressStyle={{
+                      backgroundColor: "#5865F2",
+                      scale: 0.95,
+                    }}
+                  >
+                    {server.icon_url ? (
+                      <Image
+                        source={{ uri: `${baseUrl}${server.icon_url}` }}
+                        style={{ 
+                          width: 48, 
+                          height: 48, 
+                          borderRadius: selectedServer?.id === server.id ? 12 : 24 
+                        }}
+                      />
+                    ) : (
+                      <Avatar circular size="$5" backgroundColor={selectedServer?.id === server.id ? "white" : "#5865F2"}>
+                        <Avatar.Fallback backgroundColor={selectedServer?.id === server.id ? "white" : "#5865F2"}>
+                          <Text 
+                            color={selectedServer?.id === server.id ? "#5865F2" : "white"} 
+                            fontSize="$4" 
+                            fontWeight="700"
+                          >
+                            {getFirstLetter(server.name)}
+                          </Text>
+                        </Avatar.Fallback>
+                      </Avatar>
+                    )}
+                  </YStack>
+                )}
               </TouchableOpacity>
             ))}
+            
+            {servers.length === 0 && isMobile && (
+              <YStack padding="$4" alignItems="center">
+                <Text color="#72767d" fontSize="$3" textAlign="center">
+                  No servers yet. Create or join one to get started!
+                </Text>
+              </YStack>
+            )}
           </YStack>
         </ScrollView>
 
         {/* Settings Button */}
-        <YStack position="absolute" bottom={30} alignSelf="center">
-          <Button
-            circular
-            size="$5"
-            backgroundColor="#2f3136"
-            onPress={() => setSettingsOpen(true)}
-            icon={<Settings size={20} color="white" />}
-            pressStyle={{
-              backgroundColor: "#40444b",
-            }}
-          />
-        </YStack>
+        {!isMobile ? (
+          // Desktop: Fixed at bottom
+          <YStack 
+            position="absolute" 
+            bottom={16}
+            left={8}
+            alignItems="center"
+            zIndex={10}
+          >
+            <Button
+              circular
+              size="$5"
+              backgroundColor="#2f3136"
+              onPress={() => setSettingsOpen(true)}
+              icon={<Settings size={20} color="white" />}
+              hoverStyle={{
+                backgroundColor: "#40444b",
+              }}
+              pressStyle={{
+                backgroundColor: "#40444b",
+                scale: 0.95,
+              }}
+            />
+          </YStack>
+        ) : (
+          // Mobile: At bottom with safe area
+          <YStack 
+            paddingHorizontal="$4"
+            paddingBottom={insets.bottom + 40}
+            paddingTop="$3"
+            borderTopWidth={1}
+            borderTopColor="#18191c"
+            backgroundColor="#202225"
+          >
+            <Button
+              size="$4"
+              width="100%"
+              backgroundColor="#2f3136"
+              onPress={() => setSettingsOpen(true)}
+              icon={<Settings size={20} color="white" />}
+              pressStyle={{
+                backgroundColor: "#40444b",
+              }}
+            >
+              Settings
+            </Button>
+          </YStack>
+        )}
 
         {/* User Settings Dialog */}
         <UserSettingsDialog
@@ -199,50 +337,98 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
       </YStack>
 
       {/* Create/Join Server Modal */}
-      <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
-        <YStack flex={1} backgroundColor="rgba(0,0,0,0.7)" justifyContent="center" alignItems="center" padding="$4">
-          <Card width="90%" maxWidth={400} backgroundColor="#2f3136" padding="$4" borderRadius="$4">
-            <YStack>
+      <Modal 
+        visible={modalVisible} 
+        transparent 
+        animationType="fade" 
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <YStack 
+          flex={1} 
+          backgroundColor="rgba(0,0,0,0.7)" 
+          justifyContent="center" 
+          alignItems="center" 
+          padding="$4"
+        >
+          <Card 
+            width={isMobile ? "100%" : "90%"} 
+            maxWidth={500} 
+            backgroundColor="#2f3136" 
+            padding={isMobile ? "$5" : "$4"} 
+            borderRadius="$4"
+          >
+            <YStack gap="$4">
+              {/* Header */}
+              <XStack justifyContent="space-between" alignItems="center">
+                <Text fontSize={isMobile ? "$7" : "$6"} fontWeight="700" color="white">
+                  Add a Server
+                </Text>
+                <TouchableOpacity onPress={() => setModalVisible(false)}>
+                  <X size={24} color="#b9bbbe" />
+                </TouchableOpacity>
+              </XStack>
+
               {/* Create Server Section */}
-              <YStack>
-                <Text fontSize="$6" fontWeight="700" color="white">
-                  Create a Server
+              <YStack gap="$3">
+                <Text fontSize={isMobile ? "$5" : "$4"} fontWeight="600" color="#b9bbbe">
+                  Create a New Server
                 </Text>
                 <Input
-                  placeholder="Server Name"
+                  placeholder="Enter server name"
                   value={newServerName}
                   onChangeText={setNewServerName}
                   backgroundColor="#40444b"
                   borderWidth={0}
                   color="white"
+                  fontSize={isMobile ? "$4" : "$3"}
+                  padding="$3"
                   autoFocus
                 />
-                <Button backgroundColor="#5865F2" onPress={createNewServer}>
-                  Create
+                <Button 
+                  backgroundColor="#5865F2" 
+                  onPress={createNewServer}
+                  size={isMobile ? "$4" : "$3"}
+                  disabled={!newServerName.trim()}
+                  disabledStyle={{ opacity: 0.5 }}
+                  pressStyle={{ backgroundColor: "#4752C4" }}
+                >
+                  Create Server
                 </Button>
               </YStack>
 
               {/* Divider */}
-              <YStack height={1} backgroundColor="#202225" marginVertical="$2" />
+              <XStack alignItems="center" gap="$3">
+                <Separator flex={1} borderColor="#40444b" />
+                <Text color="#72767d" fontSize="$2">OR</Text>
+                <Separator flex={1} borderColor="#40444b" />
+              </XStack>
 
               {/* Join Server Section */}
-              <YStack>
-                <Text fontSize="$6" fontWeight="700" color="white">
-                  Join a Server
+              <YStack gap="$3">
+                <Text fontSize={isMobile ? "$5" : "$4"} fontWeight="600" color="#b9bbbe">
+                  Join an Existing Server
                 </Text>
                 <Input
-                  placeholder="Invite Link"
+                  placeholder="Paste invite link"
                   value={inviteUrl}
                   onChangeText={setInviteUrl}
                   backgroundColor="#40444b"
                   borderWidth={0}
                   color="white"
+                  fontSize={isMobile ? "$4" : "$3"}
+                  padding="$3"
+                  autoCapitalize="none"
+                  autoCorrect={false}
                 />
                 <Button
                   backgroundColor="transparent"
                   borderWidth={1}
                   borderColor="#5865F2"
                   onPress={joinServer}
+                  size={isMobile ? "$4" : "$3"}
+                  disabled={!inviteUrl.trim()}
+                  disabledStyle={{ opacity: 0.5 }}
+                  pressStyle={{ backgroundColor: "rgba(88,101,242,0.1)" }}
                 >
                   Join Server
                 </Button>
@@ -250,13 +436,14 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
 
               {/* Close Button */}
               <Button
-                backgroundColor="transparent"
+                backgroundColor="#40444b"
                 onPress={() => {
                   setModalVisible(false);
                   setNewServerName("");
                   setInviteUrl("");
                 }}
-                marginTop="$2"
+                size={isMobile ? "$4" : "$3"}
+                pressStyle={{ backgroundColor: "#202225" }}
               >
                 Cancel
               </Button>
@@ -269,17 +456,23 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
       {snackbarVisible && (
         <Card
           position="absolute"
-          bottom={20}
-          alignSelf="center"
+          bottom={insets.bottom + 20}
+          left={isMobile ? 16 : "50%"}
+          transform={isMobile ? undefined : [{ translateX: -150 }]}
+          width={isMobile ? width - 32 : 300}
           backgroundColor="#323232"
-          padding="$3"
-          borderRadius="$3"
+          padding={isMobile ? "$4" : "$3"}
+          borderRadius="$4"
+          shadowColor="black"
+          shadowOffset={{ width: 0, height: 4 }}
+          shadowOpacity={0.3}
+          shadowRadius={8}
           enterStyle={{
             opacity: 0,
             y: 20,
           }}
         >
-          <Text color="white">{snackbarMessage}</Text>
+          <Text color="white" fontSize={isMobile ? "$4" : "$3"}>{snackbarMessage}</Text>
         </Card>
       )}
     </>

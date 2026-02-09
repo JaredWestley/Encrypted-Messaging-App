@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useRoute, useNavigation } from "@react-navigation/native";
+import { useRouter } from "expo-router";
 import {
   YStack,
   XStack,
@@ -8,7 +8,6 @@ import {
   Button,
   Card,
   Theme,
-  ScrollView,
   Spinner,
 } from "tamagui";
 import {
@@ -19,8 +18,20 @@ import {
   Alert as RNAlert,
   Modal,
   Pressable,
+  useWindowDimensions,
 } from "react-native";
-import { Settings, MoreVertical, Edit3, Trash2 } from "@tamagui/lucide-icons";
+import { 
+  Settings, 
+  MoreVertical, 
+  Edit3, 
+  Trash2, 
+  Menu, 
+  X as CloseIcon,
+  Send,
+  Hash,
+  Users
+} from "@tamagui/lucide-icons";
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ServerSidebar from "./components/ServerSidebar";
 import RightSidebar from "./components/RightSidebar";
 import SettingsDialog from "./components/SettingsDialog";
@@ -33,8 +44,6 @@ import {
   joinServerWithInvite,
 } from "../utils/api";
 import { useAuth } from "../utils/AuthContext";
-import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import type { RouteProp } from "@react-navigation/native";
 
 const API_URL = "http://localhost:8000/api";
 
@@ -58,19 +67,16 @@ interface User {
   username: string;
 }
 
-type RootStackParamList = {
-  Login: undefined;
-  Register: undefined;
-  Chat: { inviteCode?: string };
-};
-
-type ChatPageRouteProp = RouteProp<RootStackParamList, "Chat">;
-type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
-
 const ChatPage: React.FC = () => {
-  const route = useRoute<ChatPageRouteProp>();
-  const navigation = useNavigation<NavigationProp>();
+  const router = useRouter();
   const { token, username, userId, logout } = useAuth();
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  
+  // Responsive breakpoint
+  const isDesktop = width >= 768;
+  const isTablet = width >= 600 && width < 768;
+  const isMobile = width < 600;
   
   const [servers, setServers] = useState<Server[]>([]);
   const [selectedServer, setSelectedServer] = useState<Server | null>(null);
@@ -88,56 +94,10 @@ const ChatPage: React.FC = () => {
   const [menuMessageId, setMenuMessageId] = useState<number | null>(null);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-
-  const inviteCode = route.params?.inviteCode;
-
-  // Join server from invite code
-  useEffect(() => {
-    const joinServerFromUrl = async () => {
-      if (!token || !inviteCode) return;
-
-      try {
-        await joinServerWithInvite(token, inviteCode, logout);
-        const updatedServers = await apiRequest<Server[]>(
-          `${API_URL}/servers`,
-          { headers: { Authorization: `Bearer ${token}` } },
-          logout
-        );
-
-        const newlyJoinedServer = updatedServers.find(
-          (s) => !servers.some((prev) => prev.id === s.id)
-        );
-
-        if (newlyJoinedServer) {
-          setSelectedServer(newlyJoinedServer);
-        } else if (updatedServers.length > 0) {
-          setSelectedServer(updatedServers[0]);
-        }
-
-        setServers(updatedServers);
-        showSnackbar("Successfully joined the server!");
-
-        // Navigate away to stop re-triggering
-        navigation.navigate("Chat", {});
-      } catch (error: any) {
-        try {
-          const parsed = JSON.parse(error.message);
-          if (parsed.detail === "You are banned from this server") {
-            showSnackbar("You are banned from this server");
-            return;
-          }
-          if (parsed.detail === "Invalid or expired invite") {
-            showSnackbar("Invalid or expired invite link");
-            return;
-          }
-        } catch {}
-        showSnackbar(error.message || "Failed to join server");
-      }
-    };
-
-    joinServerFromUrl();
-  }, [inviteCode, token, logout, navigation]);
+  
+  // Mobile sidebar states
+  const [showServerSidebar, setShowServerSidebar] = useState(false);
+  const [showUserSidebar, setShowUserSidebar] = useState(false);
 
   const showSnackbar = (message: string) => {
     setSnackbarMessage(message);
@@ -153,7 +113,12 @@ const ChatPage: React.FC = () => {
       { headers: { Authorization: `Bearer ${token}` } },
       logout
     )
-      .then((data) => setServers(data))
+      .then((data) => {
+        setServers(data);
+        if (!selectedServer && data.length > 0) {
+          setSelectedServer(data[0]);
+        }
+      })
       .catch(() => setError("Failed to load servers"));
   }, [token, didLeaveServer]);
 
@@ -202,7 +167,9 @@ const ChatPage: React.FC = () => {
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     if (messages.length > 0) {
-      flatListRef.current?.scrollToEnd({ animated: true });
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     }
   }, [messages]);
 
@@ -252,6 +219,16 @@ const ChatPage: React.FC = () => {
   const formatTimestamp = (isoString: string) => {
     const date = new Date(isoString);
     if (isNaN(date.getTime())) return "Invalid date";
+    
+    if (isMobile) {
+      // Shorter format for mobile
+      return date.toLocaleString(undefined, {
+        hour: "numeric",
+        minute: "numeric",
+        hour12: true,
+      });
+    }
+    
     return date.toLocaleString(undefined, {
       hour: "numeric",
       minute: "numeric",
@@ -284,18 +261,18 @@ const ChatPage: React.FC = () => {
   const renderMessage = ({ item: msg }: { item: Message }) => (
     <Pressable
       onLongPress={() => openMessageMenu(msg.id, msg.content)}
-      style={{ marginBottom: 8 }}
+      style={{ marginBottom: isMobile ? 12 : 8 }}
     >
       <Card
         backgroundColor={editingMessageId === msg.id ? "#40444b" : "#2c2f33"}
-        padding="$3"
+        padding={isMobile ? "$3" : "$3"}
         borderRadius="$3"
         pressStyle={{
           backgroundColor: "#3a3c43",
         }}
       >
         {editingMessageId === msg.id ? (
-          <YStack>
+          <YStack gap="$2">
             <Input
               value={editContent}
               onChangeText={setEditContent}
@@ -306,8 +283,9 @@ const ChatPage: React.FC = () => {
               color="white"
               placeholder="Edit your message"
               autoFocus
+              fontSize={isMobile ? "$4" : "$3"}
             />
-            <XStack justifyContent="flex-end">
+            <XStack justifyContent="flex-end" gap="$2">
               <Button
                 size="$3"
                 onPress={() => setEditingMessageId(null)}
@@ -325,23 +303,25 @@ const ChatPage: React.FC = () => {
             </XStack>
           </YStack>
         ) : (
-          <YStack>
-            <XStack alignItems="center" justifyContent="space-between">
-              <XStack alignItems="center" flex={1}>
+          <YStack gap="$1">
+            <XStack alignItems="center" justifyContent="gap-between">
+              <XStack alignItems="center" flex={1} gap="$2">
                 <Pressable onPress={() => handleUserEdit({ id: msg.user_id, username: msg.username })}>
-                  <Text fontWeight="700" color="white" fontSize="$4">
+                  <Text fontWeight="700" color="white" fontSize={isMobile ? "$5" : "$4"}>
                     {msg.username}
                   </Text>
                 </Pressable>
-                <Text fontSize="$2" color="#b9bbbe">
+                <Text fontSize={isMobile ? "$2" : "$1"} color="#72767d">
                   {formatTimestamp(msg.timestamp)}
                 </Text>
               </XStack>
-              <TouchableOpacity onPress={() => openMessageMenu(msg.id, msg.content)}>
-                <MoreVertical size={20} color="#b9bbbe" />
-              </TouchableOpacity>
+              {!isMobile && (
+                <TouchableOpacity onPress={() => openMessageMenu(msg.id, msg.content)}>
+                  <MoreVertical size={20} color="#b9bbbe" />
+                </TouchableOpacity>
+              )}
             </XStack>
-            <Text color="#dcddde" fontSize="$3">
+            <Text color="#dcddde" fontSize={isMobile ? "$4" : "$3"} lineHeight={isMobile ? 22 : 20}>
               {msg.content}
             </Text>
           </YStack>
@@ -362,59 +342,143 @@ const ChatPage: React.FC = () => {
 
   return (
     <Theme name="dark">
-      <YStack flex={1} backgroundColor="#2f3136">
+      <YStack flex={1} backgroundColor="#2f3136" paddingTop={insets.top}>
         <XStack flex={1}>
-          {/* Left Sidebar - Servers */}
-          <ServerSidebar
-            servers={servers}
-            selectedServer={selectedServer}
-            setSelectedServer={setSelectedServer}
-            setServers={setServers}
-            token={token}
-            setError={setError}
-          />
+          {/* Left Sidebar - Desktop: Always visible, Mobile: Modal */}
+          {isDesktop ? (
+            <ServerSidebar
+              servers={servers}
+              selectedServer={selectedServer}
+              setSelectedServer={setSelectedServer}
+              setServers={setServers}
+              token={token}
+              setError={setError}
+              logout={logout}
+            />
+          ) : (
+            <Modal
+              visible={showServerSidebar}
+              transparent
+              animationType="slide"
+              onRequestClose={() => setShowServerSidebar(false)}
+            >
+              <Pressable
+                style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}
+                onPress={() => setShowServerSidebar(false)}
+              >
+                <YStack
+                  width="80%"
+                  maxWidth={300}
+                  height="100%"
+                  backgroundColor="#2f3136"
+                  paddingTop={insets.top}
+                >
+                  <XStack
+                    padding="$4"
+                    justifyContent="gap-between"
+                    alignItems="center"
+                    borderBottomWidth={1}
+                    borderBottomColor="#202225"
+                  >
+                    <Text fontSize="$6" fontWeight="700" color="white">
+                      Servers
+                    </Text>
+                    <TouchableOpacity onPress={() => setShowServerSidebar(false)}>
+                      <CloseIcon size={24} color="#b9bbbe" />
+                    </TouchableOpacity>
+                  </XStack>
+                  <ServerSidebar
+                    servers={servers}
+                    selectedServer={selectedServer}
+                    setSelectedServer={(server) => {
+                      setSelectedServer(server);
+                      setShowServerSidebar(false);
+                    }}
+                    setServers={setServers}
+                    token={token}
+                    setError={setError}
+                    logout={logout}
+                  />
+                </YStack>
+              </Pressable>
+            </Modal>
+          )}
 
           {/* Center Chat Panel */}
           {selectedServer ? (
             <YStack flex={1} backgroundColor="#36393f">
               {/* Header */}
               <XStack
-                height={64}
-                paddingHorizontal="$4"
+                height={isMobile ? 56 : 64}
+                paddingHorizontal={isMobile ? "$3" : "$4"}
                 alignItems="center"
-                justifyContent="space-between"
+                justifyContent="gap-between"
                 backgroundColor="#2f3136"
                 borderBottomWidth={1}
                 borderBottomColor="#202225"
               >
-                <Text fontSize="$7" fontWeight="600" color="white">
-                  {selectedServer.name}
-                </Text>
-                <Button
-                  size="$3"
-                  backgroundColor="transparent"
-                  borderWidth={1}
-                  borderColor="#5865F2"
-                  icon={<Settings size={16} color="#5865F2" />}
-                  onPress={() => setIsServerSettingsOpen(true)}
-                  pressStyle={{
-                    backgroundColor: "rgba(88,101,242,0.1)",
-                  }}
-                >
-                  Settings
-                </Button>
+                <XStack alignItems="center" gap="$3" flex={1}>
+                  {!isDesktop && (
+                    <TouchableOpacity onPress={() => setShowServerSidebar(true)}>
+                      <Menu size={24} color="#b9bbbe" />
+                    </TouchableOpacity>
+                  )}
+                  <Hash size={isMobile ? 20 : 24} color="#72767d" />
+                  <Text 
+                    fontSize={isMobile ? "$5" : "$7"} 
+                    fontWeight="600" 
+                    color="white"
+                    numberOfLines={1}
+                    flex={1}
+                  >
+                    {selectedServer.name}
+                  </Text>
+                </XStack>
+                <XStack gap="$2">
+                  {!isMobile && (
+                    <Button
+                      size="$3"
+                      backgroundColor="transparent"
+                      borderWidth={1}
+                      borderColor="#5865F2"
+                      icon={<Users size={16} color="#5865F2" />}
+                      onPress={() => setShowUserSidebar(true)}
+                      pressStyle={{
+                        backgroundColor: "rgba(88,101,242,0.1)",
+                      }}
+                    />
+                  )}
+                  <Button
+                    size="$3"
+                    backgroundColor="transparent"
+                    borderWidth={1}
+                    borderColor="#5865F2"
+                    icon={<Settings size={16} color="#5865F2" />}
+                    onPress={() => setIsServerSettingsOpen(true)}
+                    pressStyle={{
+                      backgroundColor: "rgba(88,101,242,0.1)",
+                    }}
+                  >
+                    {!isMobile && "Settings"}
+                  </Button>
+                </XStack>
               </XStack>
 
               {/* Messages List */}
               <KeyboardAvoidingView
                 behavior={Platform.OS === "ios" ? "padding" : "height"}
                 style={{ flex: 1 }}
-                keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
+                keyboardVerticalOffset={Platform.OS === "ios" ? (isMobile ? 90 : 100) : 0}
               >
-                <YStack flex={1} backgroundColor="#2c2f33" padding="$3">
+                <YStack flex={1} backgroundColor="#36393f">
                   {error && (
-                    <Card backgroundColor="#f44336" padding="$3" marginBottom="$2" borderRadius="$3">
-                      <Text color="white" fontWeight="600">
+                    <Card 
+                      backgroundColor="#f44336" 
+                      padding="$3" 
+                      margin="$3" 
+                      borderRadius="$3"
+                    >
+                      <Text color="white" fontWeight="600" fontSize={isMobile ? "$3" : "$2"}>
                         {error}
                       </Text>
                     </Card>
@@ -424,22 +488,27 @@ const ChatPage: React.FC = () => {
                     data={messages}
                     renderItem={renderMessage}
                     keyExtractor={(item) => item.id.toString()}
-                    contentContainerStyle={{ paddingBottom: 16 }}
+                    contentContainerStyle={{ 
+                      padding: isMobile ? 12 : 16,
+                      paddingBottom: 16 
+                    }}
                     onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
                   />
                 </YStack>
 
                 {/* Input Box */}
                 <XStack
-                  padding="$3"
+                  padding={isMobile ? "$2" : "$3"}
+                  paddingBottom={Platform.OS === "ios" ? insets.bottom : (isMobile ? "$2" : "$3")}
                   backgroundColor="#2f3136"
                   borderTopWidth={1}
                   borderTopColor="#202225"
                   alignItems="flex-end"
+                  gap="$2"
                 >
                   <Input
                     flex={1}
-                    placeholder="Type a message..."
+                    placeholder={`Message ${selectedServer.name}`}
                     value={input}
                     onChangeText={setInput}
                     multiline
@@ -448,8 +517,10 @@ const ChatPage: React.FC = () => {
                     backgroundColor="#40444b"
                     borderWidth={0}
                     color="white"
-                    borderRadius="$3"
-                    padding="$3"
+                    borderRadius="$4"
+                    padding={isMobile ? "$3" : "$3"}
+                    fontSize={isMobile ? "$4" : "$3"}
+                    onSubmitEditing={isMobile ? undefined : handleSend}
                   />
                   <Button
                     backgroundColor="#5865F2"
@@ -461,18 +532,48 @@ const ChatPage: React.FC = () => {
                     disabledStyle={{
                       opacity: 0.5,
                     }}
+                    size={isMobile ? "$4" : "$3"}
+                    icon={isMobile ? <Send size={20} color="white" /> : undefined}
                   >
-                    Send
+                    {!isMobile && "Send"}
                   </Button>
                 </XStack>
               </KeyboardAvoidingView>
             </YStack>
           ) : (
-            <YStack flex={1} backgroundColor="#36393f" justifyContent="center" alignItems="center">
-              <Text color="#72767d" fontSize="$6" fontWeight="600">
-                Select a server to start chatting
+            <YStack 
+              flex={1} 
+              backgroundColor="#36393f" 
+              justifyContent="center" 
+              alignItems="center"
+              padding="$4"
+            >
+              {!isDesktop && (
+                <TouchableOpacity 
+                  onPress={() => setShowServerSidebar(true)}
+                  style={{ position: 'absolute', top: 20 + insets.top, left: 20 }}
+                >
+                  <Menu size={28} color="#b9bbbe" />
+                </TouchableOpacity>
+              )}
+              <Text color="#72767d" fontSize={isMobile ? "$5" : "$6"} fontWeight="600" textAlign="center">
+                {servers.length === 0 
+                  ? "Create or join a server to start chatting"
+                  : "Select a server to start chatting"}
               </Text>
             </YStack>
+          )}
+
+          {/* Right Sidebar - Desktop only */}
+          {isDesktop && selectedServer && showUserSidebar && (
+            <RightSidebar
+              selectedServer={selectedServer}
+              token={token}
+              userId={userId!}
+              onUserClick={handleUserEdit}
+              onClose={() => setShowUserSidebar(false)}
+              logout={logout}
+            />
           )}
         </XStack>
 
@@ -484,10 +585,22 @@ const ChatPage: React.FC = () => {
           onRequestClose={() => setMenuVisible(false)}
         >
           <Pressable
-            style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}
+            style={{ 
+              flex: 1, 
+              backgroundColor: "rgba(0,0,0,0.5)", 
+              justifyContent: "center", 
+              alignItems: "center",
+              padding: 20
+            }}
             onPress={() => setMenuVisible(false)}
           >
-            <Card backgroundColor="#2f3136" padding="$0" borderRadius="$3" width={200}>
+            <Card 
+              backgroundColor="#2f3136" 
+              padding="$0" 
+              borderRadius="$4" 
+              width={isMobile ? "90%" : 200}
+              maxWidth={300}
+            >
               <YStack>
                 {messages.find((m) => m.id === menuMessageId)?.user_id === userId && (
                   <Pressable
@@ -496,16 +609,24 @@ const ChatPage: React.FC = () => {
                       if (msg) handleEditClick(msg.id, msg.content);
                     }}
                   >
-                    <XStack padding="$3" alignItems="center" backgroundColor="#2f3136" hoverStyle={{ backgroundColor: "#5865F2" }}>
-                      <Edit3 size={16} color="white" />
-                      <Text color="white">Edit</Text>
+                    <XStack 
+                      padding={isMobile ? "$4" : "$3"} 
+                      gap="$3" 
+                      alignItems="center"
+                    >
+                      <Edit3 size={isMobile ? 20 : 16} color="white" />
+                      <Text color="white" fontSize={isMobile ? "$4" : "$3"}>Edit</Text>
                     </XStack>
                   </Pressable>
                 )}
                 <Pressable onPress={() => menuMessageId && handleDeleteClick(menuMessageId)}>
-                  <XStack padding="$3" alignItems="center" backgroundColor="#2f3136" hoverStyle={{ backgroundColor: "#f04747" }}>
-                    <Trash2 size={16} color="#f04747" />
-                    <Text color="#f04747">Delete</Text>
+                  <XStack 
+                    padding={isMobile ? "$4" : "$3"} 
+                    gap="$3" 
+                    alignItems="center"
+                  >
+                    <Trash2 size={isMobile ? 20 : 16} color="#f04747" />
+                    <Text color="#f04747" fontSize={isMobile ? "$4" : "$3"}>Delete</Text>
                   </XStack>
                 </Pressable>
               </YStack>
@@ -513,25 +634,51 @@ const ChatPage: React.FC = () => {
           </Pressable>
         </Modal>
 
+        {/* Settings Dialog */}
+        {isServerSettingsOpen && (
+          <SettingsDialog
+            open={isServerSettingsOpen}
+            onClose={() => setIsServerSettingsOpen(false)}
+            selectedServer={selectedServer}
+            token={token}
+            userId={userId!}
+            setServers={setServers}
+            setSelectedServer={setSelectedServer}
+            setDidLeaveServer={setDidLeaveServer}
+            logout={logout}
+          />
+        )}
+
+        {/* User Profile Dialog */}
+        {isUserDialogOpen && selectedUser && (
+          <UserProfileDialog
+            open={isUserDialogOpen}
+            onClose={() => setIsUserDialogOpen(false)}
+            user={selectedUser}
+            currentUserId={userId!}
+            selectedServer={selectedServer}
+            token={token}
+            logout={logout}
+          />
+        )}
+
         {/* Snackbar */}
         {snackbarVisible && (
           <Card
             position="absolute"
-            bottom={20}
+            bottom={insets.bottom + 20}
             alignSelf="center"
             backgroundColor="#323232"
-            padding="$3"
-            borderRadius="$3"
-            enterStyle={{
-              opacity: 0,
-              y: 20,
-            }}
-            exitStyle={{
-              opacity: 0,
-              y: 20,
-            }}
+            padding={isMobile ? "$4" : "$3"}
+            borderRadius="$4"
+            marginHorizontal="$4"
+            maxWidth={isMobile ? "90%" : 400}
+            shadowColor="black"
+            shadowOffset={{ width: 0, height: 4 }}
+            shadowOpacity={0.3}
+            shadowRadius={8}
           >
-            <Text color="white">{snackbarMessage}</Text>
+            <Text color="white" fontSize={isMobile ? "$4" : "$3"}>{snackbarMessage}</Text>
           </Card>
         )}
       </YStack>
