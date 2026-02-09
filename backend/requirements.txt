@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pydantic
+sqlalchemy  # if you want DB ORM
+databases    # async DB client, optional
+sqlmodel
+passlib[bcrypt]
+python-jose

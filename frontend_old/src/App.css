@@ -1,0 +1,190 @@
+.App {
+  text-align: center;
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+  color: white;
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+body{
+  margin: 0;
+  background-color: #36393f;
+}
+
+#root{
+  background-color: #36393f;
+  color: #36393f;
+}
+
+/* Container for both Register and Login pages */
+.auth-container {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #36393f;
+  padding-left: 16px;  /* equivalent to px: 2 */
+  padding-right: 16px;
+  max-width: 100%; /* Container maxWidth="xs" handled by max-width in React MUI */
+  box-sizing: border-box;
+}
+
+/* Paper form container */
+.auth-paper {
+  padding: 40px; /* p: 5 * 8px = 40px */
+  width: 100%;
+  border-radius: 24px; /* 3 * 8px */
+  background-color: #2f3136;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.75), 0 0 2px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 24px; /* gap: 3 * 8px */
+  box-sizing: border-box;
+}
+
+/* Typography headers for Register and Login */
+.auth-title {
+  font-weight: 700;
+  text-align: center;
+  color: white;
+  user-select: none;
+  margin-bottom: 0; /* gutterBottom equivalent */
+  font-size: 2.125rem; /* MUI h4 approx */
+  line-height: 1.235;
+}
+
+/* Error alert */
+.auth-alert {
+  background-color: #f44336;
+  color: white;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* TextField inputs common styles */
+.auth-textfield {
+  background-color: #202225;
+  border-radius: 4px;
+  color: white;
+  transition: background-color 0.3s ease;
+}
+
+/* Label styles */
+.auth-textfield label {
+  color: #b9bbbe;
+  transition: color 0.3s ease;
+}
+
+/* Label hover */
+.auth-textfield:hover label {
+  color: #5865f2;
+}
+
+/* Label focused */
+.auth-textfield.Mui-focused label {
+  color: #5865f2;
+}
+
+/* Input text color */
+.auth-textfield input {
+  color: white;
+}
+
+/* Icon colors in start adornment */
+.auth-textfield .MuiInputAdornment-root svg {
+  color: #5865f2;
+}
+
+/* Password visibility toggle button */
+.auth-icon-button {
+  color: #5865f2;
+}
+
+/* Button common styles */
+.auth-button {
+  background-color: #5865f2;
+  font-weight: 700;
+  text-transform: none;
+  box-shadow: 0 4px 14px rgba(88, 101, 242, 0.4), 0 2px 10px rgba(88, 101, 242, 0.3);
+  transition: background-color 0.3s ease;
+  width: 100%;
+  height: 48px; /* large size approx */
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+/* Button hover */
+.auth-button:hover {
+  background-color: #4752c4;
+  box-shadow: 0 6px 20px rgba(71, 82, 196, 0.6), 0 3px 14px rgba(71, 82, 196, 0.4);
+}
+
+/* Disabled button */
+.auth-button:disabled {
+  background-color: #5865f2;
+  opacity: 0.6;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* Typography for footer links */
+.auth-footer-text {
+  text-align: center;
+  color: #b9bbbe;
+  user-select: none;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+/* Footer link styles */
+.auth-footer-link {
+  color: #5865f2;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+/* To make InputAdornment positioned icons align nicely */
+.auth-input-adornment-start {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Fade animation handled by MUI Fade component - no CSS needed */
