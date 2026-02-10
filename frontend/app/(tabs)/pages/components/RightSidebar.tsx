@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { YStack, XStack, Text, ScrollView, Spinner, Avatar } from "tamagui";
 import { TouchableOpacity, Image } from "react-native";
+import { X } from "@tamagui/lucide-icons";
 import { fetchUsersInServer } from "../../utils/api";
-import { useAuth } from "../../utils/AuthContext";
 
 interface User {
   id: number;
@@ -10,21 +10,34 @@ interface User {
   icon_url: string;
 }
 
+interface Server {
+  id: number;
+  name: string;
+  owner_id?: number;
+  icon_url?: string;
+}
+
 interface RightSidebarProps {
-  serverId: number;
+  selectedServer: Server;
   token: string;
-  onEditUser: (user: User) => void;
+  userId: number;
+  onUserClick: (user: User) => void;
+  onClose: () => void;
+  logout: () => void;
 }
 
 const RightSidebar: React.FC<RightSidebarProps> = ({
-  serverId,
+  selectedServer,
   token,
-  onEditUser,
+  userId,
+  onUserClick,
+  onClose,
+  logout,
 }) => {
+  const serverId = selectedServer.id;
   const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const { logout } = useAuth();
 
   useEffect(() => {
     if (!serverId || !token) {
@@ -77,6 +90,9 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
         <Text fontSize="$4" color="white" fontWeight="600">
           {error ? "Users (?)" : `Users (${users.length})`}
         </Text>
+        <TouchableOpacity onPress={onClose}>
+          <X size={20} color="#b9bbbe" />
+        </TouchableOpacity>
       </XStack>
 
       {/* User List */}
@@ -100,12 +116,13 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
         <ScrollView flex={1}>
           <YStack padding="$2">
             {users.map((user) => (
-              <TouchableOpacity key={user.id} onPress={() => onEditUser(user)}>
+              <TouchableOpacity key={user.id} onPress={() => onUserClick(user)}>
                 <XStack
                   paddingVertical="$2"
                   paddingHorizontal="$2"
                   borderRadius="$2"
                   alignItems="center"
+                  gap="$2"
                   pressStyle={{
                     backgroundColor: "#40444b",
                   }}

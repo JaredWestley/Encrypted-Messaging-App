@@ -6,6 +6,7 @@ interface AuthContextType {
   token: string | null;
   username: string | null;
   userId: number | null;
+  isLoading: boolean;
   login: (token: string, username: string, userId: number) => void;
   logout: () => void;
 }
@@ -16,11 +17,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [token, setToken] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [userId, setUserId] = useState<number | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const login = async (newToken: string, user: string, userId: number) => {
-    console.log(userId);
-    console.log(newToken);
-    console.log(user);
     setToken(newToken);
     setUsername(user);
     setUserId(userId);
@@ -40,20 +39,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     const loadAuth = async () => {
-      const savedToken = await AsyncStorage.getItem("token");
-      const savedUser = await AsyncStorage.getItem("username");
-      const savedId = await AsyncStorage.getItem("userId");
-      if (savedToken && savedUser && savedId) {
-        setToken(savedToken);
-        setUsername(savedUser);
-        setUserId(Number(savedId));
+      try {
+        const savedToken = await AsyncStorage.getItem("token");
+        const savedUser = await AsyncStorage.getItem("username");
+        const savedId = await AsyncStorage.getItem("userId");
+        if (savedToken && savedUser && savedId) {
+          setToken(savedToken);
+          setUsername(savedUser);
+          setUserId(Number(savedId));
+        }
+      } finally {
+        setIsLoading(false);
       }
     };
     loadAuth();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ token, username, userId, login, logout }}>
+    <AuthContext.Provider value={{ token, username, userId, isLoading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

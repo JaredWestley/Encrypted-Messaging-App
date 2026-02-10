@@ -3,7 +3,6 @@ import { YStack, XStack, Text, Button, Avatar, Spinner, Separator } from "tamagu
 import { Modal, TouchableOpacity, Image } from "react-native";
 import { X } from "@tamagui/lucide-icons";
 import { fetchUsersInServer } from "../../utils/api";
-import { useAuth } from "../../utils/AuthContext";
 
 interface User {
   id: number;
@@ -16,22 +15,35 @@ interface ServerUser {
   icon_url: string | null;
 }
 
+interface Server {
+  id: number;
+  name: string;
+  owner_id?: number;
+  icon_url?: string;
+}
+
 interface UserProfileDialogProps {
   open: boolean;
   user: User | null;
   onClose: () => void;
-  serverId: number;
+  currentUserId: number;
+  selectedServer: Server | null;
+  token: string;
+  logout: () => void;
 }
 
 const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
   open,
   user,
   onClose,
-  serverId,
+  currentUserId,
+  selectedServer,
+  token,
+  logout,
 }) => {
+  const serverId = selectedServer?.id ?? 0;
   const [detailedUser, setDetailedUser] = useState<ServerUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const { token, logout } = useAuth();
 
   useEffect(() => {
     if (!open || !user || !token) {

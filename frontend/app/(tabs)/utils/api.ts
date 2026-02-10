@@ -37,7 +37,6 @@ export async function apiRequest<T>(url: string, options: RequestInit, logout: (
 
   if (res.status === 401) {
     logout();
-    window.location.href = "/";
     throw new Error("Unauthorized - redirected to login");
   }
 

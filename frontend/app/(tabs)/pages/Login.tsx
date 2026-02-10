@@ -13,16 +13,7 @@ import { Alert, KeyboardAvoidingView, Platform } from "react-native";
 import { User, Lock, Eye, EyeOff } from "@tamagui/lucide-icons";
 import { loginUser } from "../utils/api";
 import { useAuth } from "../utils/AuthContext";
-import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Redirect, useRouter } from 'expo-router';
-
-type RootStackParamList = {
-  Login: undefined;
-  Register: undefined;
-  Chat: undefined;
-};
-
-type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+import { useRouter } from 'expo-router';
 
 const LoginPage: React.FC = () => {
   const router = useRouter();
@@ -128,6 +119,7 @@ const LoginPage: React.FC = () => {
                   <Input
                     flex={1}
                     placeholder="Username"
+                    placeholderTextColor="#72767d"
                     value={username}
                     onChangeText={setUsername}
                     autoCapitalize="none"
@@ -160,9 +152,11 @@ const LoginPage: React.FC = () => {
                   <Input
                     flex={1}
                     placeholder="Password"
+                    placeholderTextColor="#72767d"
                     value={password}
                     onChangeText={setPassword}
                     secureTextEntry={!showPassword}
+                    {...(!showPassword && Platform.OS === "web" ? { type: "password" } : {})}
                     autoCapitalize="none"
                     autoComplete="current-password"
                     onSubmitEditing={handleLogin}

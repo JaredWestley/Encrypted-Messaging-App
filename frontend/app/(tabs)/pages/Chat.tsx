@@ -251,25 +251,29 @@ const ChatPage: React.FC = () => {
   };
 
   const handleDeleteClick = (id: number) => {
-    RNAlert.alert("Delete Message", "Are you sure you want to delete this message?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: () => handleDelete(id) },
-    ]);
     setMenuVisible(false);
+    if (Platform.OS === "web") {
+      if (window.confirm("Are you sure you want to delete this message?")) {
+        handleDelete(id);
+      }
+    } else {
+      RNAlert.alert("Delete Message", "Are you sure you want to delete this message?", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: () => handleDelete(id) },
+      ]);
+    }
   };
 
   const renderMessage = ({ item: msg }: { item: Message }) => (
     <Pressable
       onLongPress={() => openMessageMenu(msg.id, msg.content)}
+      delayLongPress={300}
       style={{ marginBottom: isMobile ? 12 : 8 }}
     >
       <Card
         backgroundColor={editingMessageId === msg.id ? "#40444b" : "#2c2f33"}
         padding={isMobile ? "$3" : "$3"}
         borderRadius="$3"
-        pressStyle={{
-          backgroundColor: "#3a3c43",
-        }}
       >
         {editingMessageId === msg.id ? (
           <YStack gap="$2">
@@ -282,6 +286,7 @@ const ChatPage: React.FC = () => {
               borderWidth={0}
               color="white"
               placeholder="Edit your message"
+              placeholderTextColor="#72767d"
               autoFocus
               fontSize={isMobile ? "$4" : "$3"}
             />
@@ -304,7 +309,7 @@ const ChatPage: React.FC = () => {
           </YStack>
         ) : (
           <YStack gap="$1">
-            <XStack alignItems="center" justifyContent="gap-between">
+            <XStack alignItems="center" justifyContent="space-between">
               <XStack alignItems="center" flex={1} gap="$2">
                 <Pressable onPress={() => handleUserEdit({ id: msg.user_id, username: msg.username })}>
                   <Text fontWeight="700" color="white" fontSize={isMobile ? "$5" : "$4"}>
@@ -315,11 +320,9 @@ const ChatPage: React.FC = () => {
                   {formatTimestamp(msg.timestamp)}
                 </Text>
               </XStack>
-              {!isMobile && (
-                <TouchableOpacity onPress={() => openMessageMenu(msg.id, msg.content)}>
-                  <MoreVertical size={20} color="#b9bbbe" />
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity onPress={() => openMessageMenu(msg.id, msg.content)}>
+                <MoreVertical size={20} color="#b9bbbe" />
+              </TouchableOpacity>
             </XStack>
             <Text color="#dcddde" fontSize={isMobile ? "$4" : "$3"} lineHeight={isMobile ? 22 : 20}>
               {msg.content}
@@ -330,14 +333,14 @@ const ChatPage: React.FC = () => {
     </Pressable>
   );
 
+  useEffect(() => {
+    if (!token) {
+      router.replace("/(tabs)/pages/Login");
+    }
+  }, [token]);
+
   if (!token) {
-    return (
-      <YStack flex={1} padding="$4" backgroundColor="#2f3136" justifyContent="center" alignItems="center">
-        <Text color="#dcddde" fontSize="$6">
-          You must be logged in to view this page.
-        </Text>
-      </YStack>
-    );
+    return null;
   }
 
   return (
@@ -375,7 +378,7 @@ const ChatPage: React.FC = () => {
                 >
                   <XStack
                     padding="$4"
-                    justifyContent="gap-between"
+                    justifyContent="space-between"
                     alignItems="center"
                     borderBottomWidth={1}
                     borderBottomColor="#202225"
@@ -412,7 +415,7 @@ const ChatPage: React.FC = () => {
                 height={isMobile ? 56 : 64}
                 paddingHorizontal={isMobile ? "$3" : "$4"}
                 alignItems="center"
-                justifyContent="gap-between"
+                justifyContent="space-between"
                 backgroundColor="#2f3136"
                 borderBottomWidth={1}
                 borderBottomColor="#202225"

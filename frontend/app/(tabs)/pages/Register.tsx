@@ -12,20 +12,11 @@ import {
 } from "tamagui";
 import { KeyboardAvoidingView, Platform } from "react-native";
 import { User, Mail, Lock, Eye, EyeOff } from "@tamagui/lucide-icons";
-import { useNavigation } from "@react-navigation/native";
+import { useRouter } from "expo-router";
 import { registerUser } from "../utils/api";
-import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-
-type RootStackParamList = {
-  Login: undefined;
-  Register: undefined;
-  Chat: undefined;
-};
-
-type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const RegisterPage: React.FC = () => {
-  const navigation = useNavigation<NavigationProp>();
+  const router = useRouter();
 
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -58,7 +49,7 @@ const RegisterPage: React.FC = () => {
     setLoading(true);
     try {
       await registerUser(username.trim(), email.trim(), password);
-      navigation.navigate("Login");
+      router.replace("/pages/Login");
     } catch {
       setError("Registration failed. Please try again.");
     } finally {
@@ -143,6 +134,7 @@ const RegisterPage: React.FC = () => {
                     <Input
                       flex={1}
                       placeholder="Username"
+                      placeholderTextColor="#72767d"
                       value={username}
                       onChangeText={setUsername}
                       autoCapitalize="none"
@@ -174,6 +166,7 @@ const RegisterPage: React.FC = () => {
                     <Input
                       flex={1}
                       placeholder="Email"
+                      placeholderTextColor="#72767d"
                       value={email}
                       onChangeText={setEmail}
                       autoCapitalize="none"
@@ -205,9 +198,11 @@ const RegisterPage: React.FC = () => {
                     <Input
                       flex={1}
                       placeholder="Password"
+                      placeholderTextColor="#72767d"
                       value={password}
                       onChangeText={setPassword}
                       secureTextEntry={!showPassword}
+                      {...(!showPassword && Platform.OS === "web" ? { type: "password" } : {})}
                       autoCapitalize="none"
                       autoComplete="password-new"
                       returnKeyType="next"
@@ -250,9 +245,11 @@ const RegisterPage: React.FC = () => {
                     <Input
                       flex={1}
                       placeholder="Confirm Password"
+                      placeholderTextColor="#72767d"
                       value={confirmPassword}
                       onChangeText={setConfirmPassword}
                       secureTextEntry={!showConfirmPassword}
+                      {...(!showConfirmPassword && Platform.OS === "web" ? { type: "password" } : {})}
                       autoCapitalize="none"
                       autoComplete="password-new"
                       onSubmitEditing={handleRegister}
@@ -311,7 +308,7 @@ const RegisterPage: React.FC = () => {
                     color="#5865F2"
                     fontWeight="700"
                     fontSize="$3"
-                    onPress={() => navigation.navigate("Login")}
+                    onPress={() => router.replace("/pages/Login")}
                     pressStyle={{
                       opacity: 0.7,
                     }}
