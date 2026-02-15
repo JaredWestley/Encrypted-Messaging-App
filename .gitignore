@@ -1,0 +1,7 @@
+*/*.md
+*.db
+*.env
+backend/__pycache__/
+backend/app
+backend/venv
+backend/.DS_Store
