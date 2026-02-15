@@ -32,8 +32,27 @@ export interface Role {
   is_default?: boolean; // Add this line
 }
 
-export async function apiRequest<T>(url: string, options: RequestInit, logout: () => void): Promise<T> {
-  const res = await fetch(url, options);
+export async function apiRequest<T>(
+  url: string,
+  options: RequestInit,
+  logout: () => void,
+  refreshAccessToken?: () => Promise<boolean>
+): Promise<T> {
+  let res = await fetch(url, options);
+
+  // If 401 and we have a refresh function, try to refresh and retry once
+  if (res.status === 401 && refreshAccessToken) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      // Get the new token from secure storage and retry
+      const { getSecureItem } = require("./secureStorage");
+      const newToken = await getSecureItem("token");
+      if (newToken && options.headers) {
+        const newHeaders = { ...options.headers, Authorization: `Bearer ${newToken}` };
+        res = await fetch(url, { ...options, headers: newHeaders });
+      }
+    }
+  }
 
   if (res.status === 401) {
     logout();
@@ -60,7 +79,10 @@ export async function registerUser(username: string, email: string, password: st
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, email, password }),
   });
-  if (!res.ok) throw new Error("Registration failed");
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || "Registration failed");
+  }
   return res.json();
 }
 
@@ -71,8 +93,8 @@ export async function loginUser(username: string, password: string) {
     body: JSON.stringify({ username, password }),
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Login failed: ${res.status} ${text}`);
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || "Invalid username or password");
   }
   return res.json();
 }
@@ -126,6 +148,17 @@ export async function fetchServers(token: string, logout: () => void) {
 
 export async function fetchMessages(token: string, serverId: number, logout: () => void) {
   return apiRequest(`${API_URL}/messages?server_id=${serverId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }, logout);
+}
+
+export async function syncMessages(
+  token: string,
+  serverId: number,
+  afterId: number,
+  logout: () => void
+): Promise<any[]> {
+  return apiRequest(`${API_URL}/messages/sync?server_id=${serverId}&after_id=${afterId}`, {
     headers: { Authorization: `Bearer ${token}` },
   }, logout);
 }
@@ -307,7 +340,7 @@ export async function updateRole(
   permissions: string[],
   userIds: number[],
   logout: () => void,
-  isDefault: boolean = false // ✅ add this
+  isDefault: boolean = false
 ): Promise<void> {
   await apiRequest(`${API_URL}/servers/${serverId}/roles/${roleId}`, {
     method: "PUT",
@@ -315,7 +348,7 @@ export async function updateRole(
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ name, permissions, userIds, is_default: isDefault }), // ✅ send it
+    body: JSON.stringify({ name, permissions }),
   }, logout);
 }
 
@@ -489,5 +522,236 @@ export async function uploadServerIcon(
       Authorization: `Bearer ${token}`,
     },
     body: formData,
+  }, logout);
+}
+
+
+// ─── Friends ──────────────────────────────────────────────────────
+
+export interface FriendData {
+  id: number;
+  username: string;
+  icon_url?: string | null;
+  created_at?: string;
+}
+
+export interface FriendshipData {
+  id: number;
+  user_id: number;
+  friend_id: number;
+  status: string;
+  created_at: string;
+  friend: FriendData | null;
+}
+
+export async function sendFriendRequest(
+  token: string,
+  friendUsername: string,
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest(`${API_URL}/friends/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ friend_username: friendUsername }),
+  }, logout);
+}
+
+export async function acceptFriendRequest(
+  token: string,
+  friendshipId: number,
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest(`${API_URL}/friends/${friendshipId}/accept`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }, logout);
+}
+
+export async function rejectFriendRequest(
+  token: string,
+  friendshipId: number,
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest(`${API_URL}/friends/${friendshipId}/reject`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }, logout);
+}
+
+export async function removeFriend(
+  token: string,
+  friendId: number,
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest(`${API_URL}/friends/${friendId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }, logout);
+}
+
+export async function fetchFriends(
+  token: string,
+  logout: () => void
+): Promise<FriendshipData[]> {
+  return apiRequest(`${API_URL}/friends`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }, logout);
+}
+
+export async function fetchFriendRequests(
+  token: string,
+  logout: () => void
+): Promise<FriendshipData[]> {
+  return apiRequest(`${API_URL}/friends/requests`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }, logout);
+}
+
+export async function fetchPendingRequests(
+  token: string,
+  logout: () => void
+): Promise<FriendshipData[]> {
+  return apiRequest(`${API_URL}/friends/pending`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }, logout);
+}
+
+
+// ─── Conversations / Direct Messages ─────────────────────────────
+
+export interface ConversationMemberData {
+  id: number;
+  username: string;
+  icon_url?: string | null;
+  created_at?: string;
+}
+
+export interface ConversationData {
+  id: number;
+  name: string | null;
+  is_group: boolean;
+  created_at: string;
+  members: ConversationMemberData[];
+}
+
+export interface DirectMessageData {
+  id: number;
+  conversation_id: number;
+  user_id: number;
+  username: string;
+  content: string;
+  created_at: string;
+}
+
+export async function createOrGetConversation(
+  token: string,
+  friendId: number,
+  logout: () => void
+): Promise<ConversationData> {
+  return apiRequest(`${API_URL}/conversations`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ friend_id: friendId }),
+  }, logout);
+}
+
+export async function fetchConversations(
+  token: string,
+  logout: () => void
+): Promise<ConversationData[]> {
+  return apiRequest(`${API_URL}/conversations`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }, logout);
+}
+
+export async function fetchConversationMessages(
+  token: string,
+  conversationId: number,
+  logout: () => void
+): Promise<DirectMessageData[]> {
+  return apiRequest(`${API_URL}/conversations/${conversationId}/messages`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }, logout);
+}
+
+export async function sendDirectMessage(
+  token: string,
+  conversationId: number,
+  content: string,
+  logout: () => void
+): Promise<DirectMessageData> {
+  return apiRequest(`${API_URL}/conversations/${conversationId}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ content }),
+  }, logout);
+}
+
+export async function editDirectMessage(
+  token: string,
+  conversationId: number,
+  messageId: number,
+  content: string,
+  logout: () => void
+): Promise<void> {
+  await apiRequest(`${API_URL}/conversations/${conversationId}/messages/${messageId}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ content }),
+  }, logout);
+}
+
+export async function deleteDirectMessage(
+  token: string,
+  conversationId: number,
+  messageId: number,
+  logout: () => void
+): Promise<void> {
+  await apiRequest(`${API_URL}/conversations/${conversationId}/messages/${messageId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }, logout);
+}
+
+export async function syncDirectMessages(
+  token: string,
+  conversationId: number,
+  afterId: number,
+  logout: () => void
+): Promise<DirectMessageData[]> {
+  return apiRequest(`${API_URL}/conversations/${conversationId}/messages/sync?after_id=${afterId}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
   }, logout);
 }

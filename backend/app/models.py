@@ -8,12 +8,20 @@ import secrets
 # Users
 class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    username: str
-    email: str
+    username: str = Field(unique=True, index=True)
+    email: str = Field(unique=True, index=True)
     password: str
     icon_url: Optional[str]
     created_at: datetime = Field(default_factory=datetime.utcnow)
     memberships: List["ServerMembership"] = Relationship(back_populates="user")
+
+
+# Token blacklist for logout invalidation
+class TokenBlacklist(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    token: str = Field(index=True)
+    blacklisted_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime
 
 # Messages
 class Message(SQLModel, table=True):
@@ -119,3 +127,47 @@ class ServerInvite(SQLModel, table=True):
 
     server: "Server" = Relationship()
     user: "User" = Relationship()
+
+
+# ─── Friends & Direct Messages ────────────────────────────────────
+
+class Friendship(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    friend_id: int = Field(foreign_key="user.id", index=True)
+    status: str = Field(default="pending")  # "pending", "accepted", "rejected"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Conversation(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: Optional[str] = None  # Optional name for group DMs
+    is_group: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    members: List["ConversationMember"] = Relationship(
+        back_populates="conversation",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    messages: List["DirectMessage"] = Relationship(
+        back_populates="conversation",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
+
+class ConversationMember(SQLModel, table=True):
+    conversation_id: int = Field(foreign_key="conversation.id", primary_key=True)
+    user_id: int = Field(foreign_key="user.id", primary_key=True)
+    joined_at: datetime = Field(default_factory=datetime.utcnow)
+
+    conversation: "Conversation" = Relationship(back_populates="members")
+
+
+class DirectMessage(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    conversation_id: int = Field(foreign_key="conversation.id", index=True)
+    user_id: int = Field(foreign_key="user.id")
+    content: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    conversation: "Conversation" = Relationship(back_populates="messages")

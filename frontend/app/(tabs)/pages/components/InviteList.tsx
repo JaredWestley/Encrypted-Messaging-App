@@ -38,7 +38,7 @@ const InviteList: React.FC<InviteListProps> = ({
     fetchInvites();
   }, [serverId, token, refreshTrigger, logout]);
 
-  const handleDelete = (inviteId: number, inviteToken: string) => {
+  const handleDelete = (inviteToken: string) => {
     RNAlert.alert(
       "Delete Invite",
       `Delete invite link ${inviteToken.substring(0, 8)}...?`,
@@ -50,7 +50,7 @@ const InviteList: React.FC<InviteListProps> = ({
           onPress: async () => {
             try {
               await deleteInvite(token, inviteToken, logout);
-              setInvites((prev) => prev.filter((inv) => inv.id !== inviteId));
+              setInvites((prev) => prev.filter((inv) => inv.token !== inviteToken));
             } catch (error: any) {
               RNAlert.alert("Error", "Failed to delete invite");
             }
@@ -80,10 +80,10 @@ const InviteList: React.FC<InviteListProps> = ({
 
   return (
     <ScrollView maxHeight={300}>
-      <YStack>
+      <YStack gap="$2">
         {invites.map((invite) => (
           <XStack
-            key={invite.id}
+            key={invite.token}
             padding="$3"
             backgroundColor="#36393f"
             borderRadius="$3"
@@ -91,17 +91,17 @@ const InviteList: React.FC<InviteListProps> = ({
             alignItems="center"
           >
             <YStack flex={1} marginRight="$2">
-              <Text color="white" fontSize="$3" numberOfLines={1}>
+              <Text color="white" fontSize="$3" numberOfLines={1} selectable>
                 {invite.token}
               </Text>
               <Text color="#b9bbbe" fontSize="$2" marginTop="$1">
-                Uses: {invite.uses}
+                Created: {new Date(invite.created_at).toLocaleDateString()}
               </Text>
             </YStack>
             <Button
               size="$3"
               backgroundColor="#f04747"
-              onPress={() => handleDelete(invite.id, invite.token)}
+              onPress={() => handleDelete(invite.token)}
             >
               Delete
             </Button>

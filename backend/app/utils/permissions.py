@@ -1,5 +1,5 @@
-from app.models import User, Server
-from sqlmodel import Session
+from app.models import User, Server, Role, RolePermission, ServerMembershipRole
+from sqlmodel import Session, select
 
 SERVER_PERMISSIONS = [
   "VIEW_CHANNEL",
@@ -7,15 +7,17 @@ SERVER_PERMISSIONS = [
   "MANAGE_ROLES",
   "KICK_MEMBERS",
   "BAN_MEMBERS",
-  "DELETE_MESSAGES"
-  # add your permission strings here...
+  "DELETE_MESSAGES",
 ]
 
-def is_server_owner(user: User, server: Server) -> bool:
-    return user.id == 1
+def is_server_owner(user: User, server_id: int, session: Session) -> bool:
+    """Check if the user is the owner of the given server."""
+    server = session.get(Server, server_id)
+    if not server:
+        return False
+    return user.id == server.owner_id
 
 def has_permission(user: User, server_id: int, permission: str, session: Session) -> bool:
-
     stmt = (
         select(RolePermission)
         .join(Role, Role.id == RolePermission.role_id)

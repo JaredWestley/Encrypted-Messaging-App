@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { YStack, XStack, Text, ScrollView, Spinner, Avatar } from "tamagui";
+import { YStack, XStack, Text, ScrollView, Spinner } from "tamagui";
 import { TouchableOpacity, Image } from "react-native";
 import { X } from "@tamagui/lucide-icons";
 import { fetchUsersInServer } from "../../utils/api";
@@ -133,13 +133,18 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
                       style={{ width: 32, height: 32, borderRadius: 16 }}
                     />
                   ) : (
-                    <Avatar circular size="$3" backgroundColor="#757575">
-                      <Avatar.Fallback backgroundColor="#757575">
-                        <Text color="white" fontSize="$3" fontWeight="600">
-                          {getFirstLetter(user.username)}
-                        </Text>
-                      </Avatar.Fallback>
-                    </Avatar>
+                    <YStack
+                      width={32}
+                      height={32}
+                      borderRadius={16}
+                      backgroundColor="#757575"
+                      justifyContent="center"
+                      alignItems="center"
+                    >
+                      <Text color="white" fontSize="$2" fontWeight="600">
+                        {getFirstLetter(user.username)}
+                      </Text>
+                    </YStack>
                   )}
                   <Text
                     color="#b9bbbe"

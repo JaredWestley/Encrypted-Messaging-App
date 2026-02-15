@@ -1,8 +1,9 @@
 fastapi
 uvicorn[standard]
-pydantic
-sqlalchemy  # if you want DB ORM
-databases    # async DB client, optional
+pydantic[email]
+sqlalchemy
+databases
 sqlmodel
 passlib[bcrypt]
-python-jose
+python-jose[cryptography]
+python-dotenv

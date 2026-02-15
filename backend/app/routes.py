@@ -1,18 +1,26 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, Body, File, UploadFile
+from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, Body, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.responses import RedirectResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from slowapi.extension import Limiter
 from typing import List
 from sqlmodel import Session, select, delete
-from app.schemas import MessageCreate, MessageUpdate, UserCreate, RoleAssign, LoginRequest, Token, UserRead, PublicUserRead, RoleRead, RoleCreate, ServerInviteRead, ServerInviteCreate, ServerRead, ServerUpdate, UserUpdate
-from app.models import User, Server, Message, ServerMembership, ServerInvite, ServerMembershipRole, Role, ServerBan, RolePermission
+from app.schemas import (
+    MessageCreate, MessageUpdate, UserCreate, RoleAssign, LoginRequest, Token,
+    UserRead, PublicUserRead, RoleRead, RoleCreate, ServerInviteRead, ServerInviteCreate,
+    ServerRead, ServerUpdate, UserUpdate,
+    FriendshipRead, FriendRequestCreate, ConversationRead, DirectMessageCreate, DirectMessageRead,
+)
+from app.models import (
+    User, Server, Message, ServerMembership, ServerInvite, ServerMembershipRole,
+    Role, ServerBan, RolePermission, TokenBlacklist,
+    Friendship, Conversation, ConversationMember, DirectMessage,
+)
 from app.database import get_session, engine
-from app.auth import hash_password, verify_password, create_access_token
+from app.auth import (
+    hash_password, verify_password, create_access_token, create_refresh_token,
+    validate_password_strength, SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+)
 from app.utils.permissions import is_server_owner, has_permission
-from passlib.context import CryptContext
+from app.websocket_manager import manager
 from datetime import timedelta, datetime
 from jose import JWTError, jwt
 from app.rate_limit import limiter
@@ -20,11 +28,7 @@ from sqlalchemy.orm import joinedload
 import os
 from uuid import uuid4
 
-# Import services which will handle the logic
-
 router = APIRouter()
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
@@ -32,8 +36,11 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UPLOAD_DIR = os.path.join(BASE_DIR, "static", "user_icons")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-SECRET_KEY = "your-secret-key"  # 🔐 Use the same as in create_access_token
-ALGORITHM = "HS256"
+def is_token_blacklisted(token: str, session: Session) -> bool:
+    """Check if a token has been blacklisted (e.g. via logout)."""
+    entry = session.exec(select(TokenBlacklist).where(TokenBlacklist.token == token)).first()
+    return entry is not None
+
 
 def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)) -> User:
     credentials_exception = HTTPException(
@@ -41,15 +48,32 @@ def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Dep
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    # Check if the token has been blacklisted (logged out)
+    if is_token_blacklisted(token, session):
+        raise credentials_exception
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+
+        # Ensure this is an access token, not a refresh token
+        token_type = payload.get("type", "access")
+        if token_type != "access":
+            raise credentials_exception
+
+        sub = payload.get("sub")
+        if sub is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
 
-    user = session.exec(select(User).where(User.username == username)).first()
+    # sub is now the user ID as a string
+    try:
+        user_id = int(sub)
+    except (ValueError, TypeError):
+        raise credentials_exception
+
+    user = session.get(User, user_id)
     if user is None:
         raise credentials_exception
     return user
@@ -104,7 +128,21 @@ async def send_message(
     session.add(db_message)
     session.commit()
     session.refresh(db_message)
-    return {"detail": "Message sent"}
+
+    # Broadcast new message to all WebSocket clients in this server
+    await manager.broadcast_to_server(message.server_id, {
+        "type": "new_message",
+        "message": {
+            "id": db_message.id,
+            "content": db_message.content,
+            "user_id": db_message.user_id,
+            "username": current_user.username,
+            "server_id": db_message.server_id,
+            "timestamp": db_message.created_at.isoformat(),
+        }
+    })
+
+    return {"detail": "Message sent", "message_id": db_message.id}
 
 @router.put("/messages/{message_id}")
 async def edit_message(
@@ -131,6 +169,14 @@ async def edit_message(
     session.add(db_message)
     session.commit()
     session.refresh(db_message)
+
+    # Broadcast edit to all WebSocket clients in this server
+    await manager.broadcast_to_server(db_message.server_id, {
+        "type": "message_edited",
+        "message_id": db_message.id,
+        "content": db_message.content,
+    })
+
     return {"detail": "Message edited"}
 
 @router.delete("/messages/{message_id}")
@@ -149,12 +195,21 @@ async def delete_message(
         raise HTTPException(status_code=403, detail="You are banned from this server")
 
     if db_message.user_id != current_user.id:
-        if not (is_server_owner(current_user, server_id) or
+        if not (is_server_owner(current_user, server_id, session) or
                 has_permission(current_user, server_id, "DELETE_MESSAGES", session)):
             raise HTTPException(status_code=403, detail="You can only delete your own messages")
 
+    msg_server_id = db_message.server_id
+    msg_id = db_message.id
     session.delete(db_message)
     session.commit()
+
+    # Broadcast deletion to all WebSocket clients in this server
+    await manager.broadcast_to_server(msg_server_id, {
+        "type": "message_deleted",
+        "message_id": msg_id,
+    })
+
     return {"detail": "Message deleted"}
 
 
@@ -751,7 +806,7 @@ async def kick_from_server(
         raise HTTPException(status_code=404, detail="User is not a member of the server")
 
     # Permission check: must be server owner or have 'kick' permission
-    if not (is_server_owner(current_user, server_id) or
+    if not (is_server_owner(current_user, server_id, session) or
             has_permission(current_user, server_id, "kick", session)):
         raise HTTPException(status_code=403, detail="You do not have permission to kick users")
 
@@ -793,7 +848,7 @@ async def ban_from_server(
         raise HTTPException(status_code=404, detail="User is not a member of the server")
 
     # Permission check
-    if not (is_server_owner(current_user, server_id) or
+    if not (is_server_owner(current_user, server_id, session) or
             has_permission(current_user, server_id, "ban", session)):
         raise HTTPException(status_code=403, detail="You do not have permission to ban users")
 
@@ -826,7 +881,7 @@ async def unban_user(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    if not (is_server_owner(current_user, server_id) or has_permission(current_user, server_id, "ban", session)):
+    if not (is_server_owner(current_user, server_id, session) or has_permission(current_user, server_id, "ban", session)):
         raise HTTPException(status_code=403, detail="You do not have permission to unban users")
 
     if is_banned_from_server(current_user.id, server_id, session):
@@ -852,7 +907,7 @@ async def get_banned_users(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    if not (is_server_owner(current_user, server_id) or has_permission(current_user, server_id, "ban", session)):
+    if not (is_server_owner(current_user, server_id, session) or has_permission(current_user, server_id, "ban", session)):
         raise HTTPException(status_code=403, detail="You do not have permission to view banned users")
 
     if is_banned_from_server(current_user.id, server_id, session):
@@ -914,15 +969,111 @@ async def leave_server(
     session.commit()
     return {"detail": "You have left the server"}
 
-# Friends
-@router.post("/friends/{friend_id}")
-async def add_friend(
-    friend_id: int,
+# ─── Friends ──────────────────────────────────────────────────────
+
+@router.post("/friends/request")
+async def send_friend_request(
+    body: FriendRequestCreate,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    # logic to add friend
-    return {"detail": "Friend added"}
+    """Send a friend request by username."""
+    friend = session.exec(select(User).where(User.username == body.friend_username)).first()
+    if not friend:
+        raise HTTPException(status_code=404, detail="User not found")
+    if friend.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot add yourself as a friend")
+
+    # Check if a friendship already exists in either direction
+    existing = session.exec(
+        select(Friendship).where(
+            ((Friendship.user_id == current_user.id) & (Friendship.friend_id == friend.id)) |
+            ((Friendship.user_id == friend.id) & (Friendship.friend_id == current_user.id))
+        )
+    ).first()
+
+    if existing:
+        if existing.status == "accepted":
+            raise HTTPException(status_code=400, detail="Already friends")
+        if existing.status == "pending":
+            # If the other person already sent us a request, auto-accept
+            if existing.user_id == friend.id:
+                existing.status = "accepted"
+                session.add(existing)
+                session.commit()
+                return {"detail": "Friend request accepted (they already sent you one)"}
+            raise HTTPException(status_code=400, detail="Friend request already sent")
+        if existing.status == "rejected":
+            # Allow re-sending after rejection
+            existing.status = "pending"
+            existing.user_id = current_user.id
+            existing.friend_id = friend.id
+            existing.created_at = datetime.utcnow()
+            session.add(existing)
+            session.commit()
+            return {"detail": "Friend request sent"}
+
+    friendship = Friendship(user_id=current_user.id, friend_id=friend.id, status="pending")
+    session.add(friendship)
+    session.commit()
+
+    # Notify the target user via WebSocket if they're connected to any DM channel
+    await manager.send_to_user(friend.id, {
+        "type": "friend_request",
+        "from_user": {"id": current_user.id, "username": current_user.username, "icon_url": current_user.icon_url},
+    })
+
+    return {"detail": "Friend request sent"}
+
+
+@router.post("/friends/{friendship_id}/accept")
+async def accept_friend_request(
+    friendship_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Accept an incoming friend request."""
+    friendship = session.get(Friendship, friendship_id)
+    if not friendship:
+        raise HTTPException(status_code=404, detail="Friend request not found")
+    if friendship.friend_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your friend request to accept")
+    if friendship.status != "pending":
+        raise HTTPException(status_code=400, detail="Request is not pending")
+
+    friendship.status = "accepted"
+    session.add(friendship)
+    session.commit()
+
+    # Notify the requester
+    await manager.send_to_user(friendship.user_id, {
+        "type": "friend_accepted",
+        "friend": {"id": current_user.id, "username": current_user.username, "icon_url": current_user.icon_url},
+    })
+
+    return {"detail": "Friend request accepted"}
+
+
+@router.post("/friends/{friendship_id}/reject")
+async def reject_friend_request(
+    friendship_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Reject an incoming friend request."""
+    friendship = session.get(Friendship, friendship_id)
+    if not friendship:
+        raise HTTPException(status_code=404, detail="Friend request not found")
+    if friendship.friend_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your friend request to reject")
+    if friendship.status != "pending":
+        raise HTTPException(status_code=400, detail="Request is not pending")
+
+    friendship.status = "rejected"
+    session.add(friendship)
+    session.commit()
+    return {"detail": "Friend request rejected"}
+
 
 @router.delete("/friends/{friend_id}")
 async def remove_friend(
@@ -930,51 +1081,576 @@ async def remove_friend(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    # logic to remove friend
+    """Remove an accepted friend."""
+    friendship = session.exec(
+        select(Friendship).where(
+            (
+                ((Friendship.user_id == current_user.id) & (Friendship.friend_id == friend_id)) |
+                ((Friendship.user_id == friend_id) & (Friendship.friend_id == current_user.id))
+            ) &
+            (Friendship.status == "accepted")
+        )
+    ).first()
+    if not friendship:
+        raise HTTPException(status_code=404, detail="Friendship not found")
+
+    session.delete(friendship)
+    session.commit()
     return {"detail": "Friend removed"}
 
-@router.post("/auth/register", response_model=UserCreate, status_code=201)
+
+@router.get("/friends", response_model=List[FriendshipRead])
+async def list_friends(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """List all accepted friends."""
+    friendships = session.exec(
+        select(Friendship).where(
+            (
+                (Friendship.user_id == current_user.id) |
+                (Friendship.friend_id == current_user.id)
+            ) &
+            (Friendship.status == "accepted")
+        )
+    ).all()
+
+    result = []
+    for f in friendships:
+        other_id = f.friend_id if f.user_id == current_user.id else f.user_id
+        other_user = session.get(User, other_id)
+        result.append(FriendshipRead(
+            id=f.id,
+            user_id=f.user_id,
+            friend_id=f.friend_id,
+            status=f.status,
+            created_at=f.created_at,
+            friend=PublicUserRead(
+                id=other_user.id,
+                username=other_user.username,
+                icon_url=other_user.icon_url,
+                created_at=other_user.created_at,
+            ) if other_user else None,
+        ))
+    return result
+
+
+@router.get("/friends/requests", response_model=List[FriendshipRead])
+async def list_friend_requests(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """List incoming pending friend requests."""
+    friendships = session.exec(
+        select(Friendship).where(
+            (Friendship.friend_id == current_user.id) &
+            (Friendship.status == "pending")
+        )
+    ).all()
+
+    result = []
+    for f in friendships:
+        sender = session.get(User, f.user_id)
+        result.append(FriendshipRead(
+            id=f.id,
+            user_id=f.user_id,
+            friend_id=f.friend_id,
+            status=f.status,
+            created_at=f.created_at,
+            friend=PublicUserRead(
+                id=sender.id,
+                username=sender.username,
+                icon_url=sender.icon_url,
+                created_at=sender.created_at,
+            ) if sender else None,
+        ))
+    return result
+
+
+@router.get("/friends/pending", response_model=List[FriendshipRead])
+async def list_outgoing_requests(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """List outgoing pending friend requests."""
+    friendships = session.exec(
+        select(Friendship).where(
+            (Friendship.user_id == current_user.id) &
+            (Friendship.status == "pending")
+        )
+    ).all()
+
+    result = []
+    for f in friendships:
+        target = session.get(User, f.friend_id)
+        result.append(FriendshipRead(
+            id=f.id,
+            user_id=f.user_id,
+            friend_id=f.friend_id,
+            status=f.status,
+            created_at=f.created_at,
+            friend=PublicUserRead(
+                id=target.id,
+                username=target.username,
+                icon_url=target.icon_url,
+                created_at=target.created_at,
+            ) if target else None,
+        ))
+    return result
+
+
+# ─── Direct Messages / Conversations ─────────────────────────────
+
+@router.post("/conversations", response_model=ConversationRead)
+async def create_or_get_conversation(
+    friend_id: int = Body(..., embed=True),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Create or get a 1-on-1 conversation with a friend."""
+    # Verify friendship
+    friendship = session.exec(
+        select(Friendship).where(
+            (
+                ((Friendship.user_id == current_user.id) & (Friendship.friend_id == friend_id)) |
+                ((Friendship.user_id == friend_id) & (Friendship.friend_id == current_user.id))
+            ) &
+            (Friendship.status == "accepted")
+        )
+    ).first()
+    if not friendship:
+        raise HTTPException(status_code=403, detail="Must be friends to start a conversation")
+
+    # Check if a 1-on-1 conversation already exists between these two users
+    my_convos = session.exec(
+        select(ConversationMember.conversation_id).where(
+            ConversationMember.user_id == current_user.id
+        )
+    ).all()
+    their_convos = session.exec(
+        select(ConversationMember.conversation_id).where(
+            ConversationMember.user_id == friend_id
+        )
+    ).all()
+
+    common_ids = set(my_convos) & set(their_convos)
+    for cid in common_ids:
+        convo = session.get(Conversation, cid)
+        if convo and not convo.is_group:
+            # Found existing 1-on-1 conversation
+            members = session.exec(
+                select(ConversationMember).where(ConversationMember.conversation_id == convo.id)
+            ).all()
+            member_users = []
+            for m in members:
+                u = session.get(User, m.user_id)
+                if u:
+                    member_users.append(PublicUserRead(
+                        id=u.id, username=u.username, icon_url=u.icon_url, created_at=u.created_at
+                    ))
+            return ConversationRead(
+                id=convo.id, name=convo.name, is_group=convo.is_group,
+                created_at=convo.created_at, members=member_users
+            )
+
+    # Create new conversation
+    convo = Conversation(is_group=False)
+    session.add(convo)
+    session.flush()
+
+    session.add(ConversationMember(conversation_id=convo.id, user_id=current_user.id))
+    session.add(ConversationMember(conversation_id=convo.id, user_id=friend_id))
+    session.commit()
+    session.refresh(convo)
+
+    friend_user = session.get(User, friend_id)
+    member_users = [
+        PublicUserRead(id=current_user.id, username=current_user.username, icon_url=current_user.icon_url, created_at=current_user.created_at),
+        PublicUserRead(id=friend_user.id, username=friend_user.username, icon_url=friend_user.icon_url, created_at=friend_user.created_at) if friend_user else None,
+    ]
+    member_users = [m for m in member_users if m is not None]
+
+    return ConversationRead(
+        id=convo.id, name=convo.name, is_group=convo.is_group,
+        created_at=convo.created_at, members=member_users
+    )
+
+
+@router.get("/conversations", response_model=List[ConversationRead])
+async def list_conversations(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """List all conversations for the current user."""
+    my_member_rows = session.exec(
+        select(ConversationMember).where(ConversationMember.user_id == current_user.id)
+    ).all()
+
+    result = []
+    for row in my_member_rows:
+        convo = session.get(Conversation, row.conversation_id)
+        if not convo:
+            continue
+        members = session.exec(
+            select(ConversationMember).where(ConversationMember.conversation_id == convo.id)
+        ).all()
+        member_users = []
+        for m in members:
+            u = session.get(User, m.user_id)
+            if u:
+                member_users.append(PublicUserRead(
+                    id=u.id, username=u.username, icon_url=u.icon_url, created_at=u.created_at
+                ))
+        result.append(ConversationRead(
+            id=convo.id, name=convo.name, is_group=convo.is_group,
+            created_at=convo.created_at, members=member_users
+        ))
+    return result
+
+
+@router.get("/conversations/{conversation_id}/messages", response_model=List[DirectMessageRead])
+async def get_conversation_messages(
+    conversation_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Get messages in a conversation."""
+    # Verify membership
+    membership = session.exec(
+        select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.user_id == current_user.id
+        )
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this conversation")
+
+    messages = session.exec(
+        select(DirectMessage).where(
+            DirectMessage.conversation_id == conversation_id
+        ).order_by(DirectMessage.created_at)
+    ).all()
+
+    result = []
+    for msg in messages:
+        user = session.get(User, msg.user_id)
+        result.append(DirectMessageRead(
+            id=msg.id,
+            conversation_id=msg.conversation_id,
+            user_id=msg.user_id,
+            username=user.username if user else "Unknown",
+            content=msg.content,
+            created_at=msg.created_at,
+        ))
+    return result
+
+
+@router.post("/conversations/{conversation_id}/messages", response_model=DirectMessageRead)
+async def send_dm(
+    conversation_id: int,
+    body: DirectMessageCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Send a message in a conversation."""
+    # Verify membership
+    membership = session.exec(
+        select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.user_id == current_user.id
+        )
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this conversation")
+
+    dm = DirectMessage(
+        conversation_id=conversation_id,
+        user_id=current_user.id,
+        content=body.content,
+    )
+    session.add(dm)
+    session.commit()
+    session.refresh(dm)
+
+    msg_data = DirectMessageRead(
+        id=dm.id,
+        conversation_id=dm.conversation_id,
+        user_id=dm.user_id,
+        username=current_user.username,
+        content=dm.content,
+        created_at=dm.created_at,
+    )
+
+    # Broadcast to all members via WebSocket
+    members = session.exec(
+        select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id
+        )
+    ).all()
+    for m in members:
+        if m.user_id != current_user.id:
+            await manager.send_to_user(m.user_id, {
+                "type": "dm_new_message",
+                "conversation_id": conversation_id,
+                "message": {
+                    "id": dm.id,
+                    "conversation_id": dm.conversation_id,
+                    "user_id": dm.user_id,
+                    "username": current_user.username,
+                    "content": dm.content,
+                    "created_at": dm.created_at.isoformat(),
+                },
+            })
+
+    return msg_data
+
+
+@router.put("/conversations/{conversation_id}/messages/{message_id}")
+async def edit_dm(
+    conversation_id: int,
+    message_id: int,
+    body: MessageUpdate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Edit a DM message."""
+    msg = session.get(DirectMessage, message_id)
+    if not msg or msg.conversation_id != conversation_id:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Can only edit your own messages")
+
+    msg.content = body.content
+    session.add(msg)
+    session.commit()
+
+    # Broadcast edit to conversation members
+    members = session.exec(
+        select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id
+        )
+    ).all()
+    for m in members:
+        if m.user_id != current_user.id:
+            await manager.send_to_user(m.user_id, {
+                "type": "dm_message_edited",
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "content": body.content,
+            })
+
+    return {"detail": "Message updated"}
+
+
+@router.delete("/conversations/{conversation_id}/messages/{message_id}")
+async def delete_dm(
+    conversation_id: int,
+    message_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Delete a DM message."""
+    msg = session.get(DirectMessage, message_id)
+    if not msg or msg.conversation_id != conversation_id:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Can only delete your own messages")
+
+    session.delete(msg)
+    session.commit()
+
+    # Broadcast deletion to conversation members
+    members = session.exec(
+        select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id
+        )
+    ).all()
+    for m in members:
+        if m.user_id != current_user.id:
+            await manager.send_to_user(m.user_id, {
+                "type": "dm_message_deleted",
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+            })
+
+    return {"detail": "Message deleted"}
+
+
+@router.get("/conversations/{conversation_id}/messages/sync")
+async def sync_dm_messages(
+    conversation_id: int,
+    after_id: int = Query(...),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Get DM messages after a given ID for reconnection sync."""
+    membership = session.exec(
+        select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.user_id == current_user.id
+        )
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this conversation")
+
+    messages = session.exec(
+        select(DirectMessage).where(
+            DirectMessage.conversation_id == conversation_id,
+            DirectMessage.id > after_id
+        ).order_by(DirectMessage.created_at)
+    ).all()
+
+    result = []
+    for msg in messages:
+        user = session.get(User, msg.user_id)
+        result.append({
+            "id": msg.id,
+            "conversation_id": msg.conversation_id,
+            "user_id": msg.user_id,
+            "username": user.username if user else "Unknown",
+            "content": msg.content,
+            "created_at": msg.created_at.isoformat(),
+        })
+    return result
+
+@router.post("/auth/register", status_code=201)
 def register(user: UserCreate, session: Session = Depends(get_session)):
-    print("Register route was called")
-    existing_user = session.exec(select(User).where(User.username == user.username)).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Username already registered")
+    # Validate username format
+    username = user.username.strip()
+    if len(username) < 3 or len(username) > 32:
+        raise HTTPException(status_code=400, detail="Username must be between 3 and 32 characters.")
+    if not username.replace("_", "").replace("-", "").isalnum():
+        raise HTTPException(status_code=400, detail="Username can only contain letters, numbers, hyphens, and underscores.")
+
+    # Validate email format
+    email = user.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email address is required.")
+
+    # Validate password strength
+    is_valid, error_msg = validate_password_strength(user.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    # Check for duplicate username
+    existing_username = session.exec(select(User).where(User.username == username)).first()
+    if existing_username:
+        raise HTTPException(status_code=409, detail="Username already registered.")
+
+    # Check for duplicate email
+    existing_email = session.exec(select(User).where(User.email == email)).first()
+    if existing_email:
+        raise HTTPException(status_code=409, detail="Email already registered.")
+
+    # Hash the password with bcrypt and create user
     hashed_password = hash_password(user.password)
-    user_obj = User(username=user.username, email=user.email, password=hashed_password)
+    user_obj = User(username=username, email=email, password=hashed_password)
     session.add(user_obj)
     session.commit()
-    print("User created:", user_obj.username)
-    users = session.exec(select(User)).all()
-    print("All users in DB:", [u.username for u in users])
     session.refresh(user_obj)
-    return user_obj
+
+    return {
+        "detail": "Account created successfully.",
+        "user": {
+            "id": user_obj.id,
+            "username": user_obj.username,
+            "email": user_obj.email,
+        }
+    }
 
 
 @router.post("/auth/login")
 def login(user: LoginRequest, session: Session = Depends(get_session)):
-    print("Login attempt for user:", user.username)
-    db_user = session.exec(select(User).where(User.username == user.username)).first()
+    # Allow login by username or email
+    login_identifier = user.username.strip()
+    db_user = session.exec(select(User).where(User.username == login_identifier)).first()
     if not db_user:
-        print("User not found")
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-    
-    if not verify_password(user.password, db_user.password):
-        print("Password check failed")
+        # Try email lookup
+        db_user = session.exec(select(User).where(User.email == login_identifier.lower())).first()
+    if not db_user:
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    print("Password verified!")
-    
-    access_token_expires = timedelta(minutes=30)
+    if not verify_password(user.password, db_user.password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    # Create tokens with user ID as sub (must be string for jose)
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": db_user.username},
+        data={"sub": str(db_user.id)},
         expires_delta=access_token_expires
     )
+    refresh_token = create_refresh_token(data={"sub": str(db_user.id)})
 
-    return {"access_token": access_token, "token_type": "bearer", "userId": db_user.id, "username": db_user.username}
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "userId": db_user.id,
+        "username": db_user.username,
+    }
+
+@router.post("/auth/logout")
+def logout(token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+    """Blacklist the current access token so it can no longer be used."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        exp = datetime.utcfromtimestamp(payload.get("exp", 0))
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Add token to blacklist
+    blacklist_entry = TokenBlacklist(token=token, expires_at=exp)
+    session.add(blacklist_entry)
+    session.commit()
+    return {"detail": "Successfully logged out"}
+
+
+@router.post("/auth/refresh")
+def refresh_token(body: dict = Body(...), session: Session = Depends(get_session)):
+    """Exchange a valid refresh token for a new access token."""
+    refresh = body.get("refresh_token")
+    if not refresh:
+        raise HTTPException(status_code=400, detail="Refresh token is required")
+
+    # Check if refresh token has been blacklisted
+    if is_token_blacklisted(refresh, session):
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    try:
+        payload = jwt.decode(refresh, SECRET_KEY, algorithms=[ALGORITHM])
+
+        # Verify this is actually a refresh token
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+        sub = payload.get("sub")
+        if sub is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    try:
+        user_id = int(sub)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Issue a new access token
+    new_access_token = create_access_token(
+        data={"sub": str(user.id)},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+    return {
+        "access_token": new_access_token,
+        "token_type": "bearer",
+    }
+
 
 @router.get("/users/me", response_model=UserRead)
 def get_current_user_info(current_user: User = Depends(get_current_user)):
-    print(current_user)
     return current_user
 
 @router.put("/users/me")
@@ -1014,6 +1690,9 @@ def update_user_info(
         updated = True
 
     if data.new_password:
+        is_valid, error_msg = validate_password_strength(data.new_password)
+        if not is_valid:
+            raise HTTPException(400, detail=error_msg)
         current_user.password = hash_password(data.new_password)
         updated = True
 
@@ -1123,18 +1802,272 @@ async def upload_server_icon(
 
 
 
-# def clear_all_users():
-#     with Session(engine) as session:
-#         session.exec(delete(User))
-#         session.commit()
-#         print("All users deleted from the database.")
+# Missed messages sync endpoint
+@router.get("/messages/sync")
+async def sync_messages(
+    server_id: int,
+    after_id: int = Query(..., description="Last message ID the client has"),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Return messages in a server that were sent after the given message ID."""
+    membership = session.exec(
+        select(ServerMembership).where(
+            ServerMembership.server_id == server_id,
+            ServerMembership.user_id == current_user.id
+        )
+    ).first()
 
-# clear_all_users()
+    if not membership:
+        raise HTTPException(status_code=403, detail="You are not a member of this server")
 
-# def clear_all_servers():
-#     with Session(engine) as session:
-#         session.exec(delete(Server))
-#         session.commit()
-#         print("All servers deleted from the database.")
+    if is_banned_from_server(current_user.id, server_id, session):
+        raise HTTPException(status_code=403, detail="You are banned from this server")
 
-# clear_all_servers()
+    messages = session.exec(
+        select(Message, User)
+        .join(User, User.id == Message.user_id)
+        .where(Message.server_id == server_id, Message.id > after_id)
+        .order_by(Message.id)
+    ).all()
+
+    results = [
+        {
+            "id": msg.id,
+            "content": msg.content,
+            "user_id": msg.user_id,
+            "username": user.username,
+            "server_id": msg.server_id,
+            "timestamp": msg.created_at.isoformat(),
+        }
+        for msg, user in messages
+    ]
+    return results
+
+
+def authenticate_ws_token(token: str, session: Session):
+    """Validate a JWT token for WebSocket connections. Returns the User or None."""
+    if is_token_blacklisted(token, session):
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type", "access") != "access":
+            return None
+        sub = payload.get("sub")
+        if sub is None:
+            return None
+        user_id = int(sub)
+    except (JWTError, ValueError, TypeError):
+        return None
+    return session.get(User, user_id)
+
+
+@router.websocket("/ws/{server_id}")
+async def websocket_endpoint(websocket: WebSocket, server_id: int):
+    """
+    WebSocket endpoint for real-time messaging per server.
+
+    Client sends JSON messages with a "type" field:
+      - {"type": "auth", "token": "<jwt>"}  (must be first message)
+      - {"type": "typing"}
+      - {"type": "stop_typing"}
+      - {"type": "ack", "message_id": <int>}
+
+    Server sends JSON messages:
+      - {"type": "new_message", "message": {...}}
+      - {"type": "message_edited", "message_id": <int>, "content": "<str>"}
+      - {"type": "message_deleted", "message_id": <int>}
+      - {"type": "typing", "user_id": <int>, "username": "<str>"}
+      - {"type": "stop_typing", "user_id": <int>}
+      - {"type": "delivery_ack", "message_id": <int>, "status": "delivered"}
+      - {"type": "error", "detail": "<str>"}
+    """
+    # Accept the WebSocket connection first, then wait for auth
+    await websocket.accept()
+
+    # Wait for authentication message
+    try:
+        auth_data = await websocket.receive_json()
+    except Exception:
+        await websocket.close(code=4001, reason="Expected auth message")
+        return
+
+    if auth_data.get("type") != "auth" or not auth_data.get("token"):
+        try:
+            await websocket.close(code=4001, reason="First message must be auth")
+        except Exception:
+            pass
+        return
+
+    # Validate token
+    with Session(engine) as session:
+        user = authenticate_ws_token(auth_data["token"], session)
+        if not user:
+            try:
+                await websocket.close(code=4003, reason="Invalid token")
+            except Exception:
+                pass
+            return
+
+        # Check server membership
+        membership = session.exec(
+            select(ServerMembership).where(
+                ServerMembership.server_id == server_id,
+                ServerMembership.user_id == user.id
+            )
+        ).first()
+
+        if not membership:
+            try:
+                await websocket.close(code=4003, reason="Not a member of this server")
+            except Exception:
+                pass
+            return
+
+        if is_banned_from_server(user.id, server_id, session):
+            try:
+                await websocket.close(code=4003, reason="Banned from this server")
+            except Exception:
+                pass
+            return
+
+        user_id = user.id
+        username = user.username
+
+    # Register connection (already accepted above)
+    await manager.connect(websocket, server_id, user_id)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type")
+
+            if msg_type == "typing":
+                await manager.broadcast_to_server(server_id, {
+                    "type": "typing",
+                    "user_id": user_id,
+                    "username": username,
+                }, exclude_user_id=user_id)
+
+            elif msg_type == "stop_typing":
+                await manager.broadcast_to_server(server_id, {
+                    "type": "stop_typing",
+                    "user_id": user_id,
+                }, exclude_user_id=user_id)
+
+            elif msg_type == "ack":
+                message_id = data.get("message_id")
+                if message_id is not None:
+                    await manager.send_to_user_in_server(server_id, user_id, {
+                        "type": "delivery_ack",
+                        "message_id": message_id,
+                        "status": "delivered",
+                    })
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, server_id, user_id)
+        # Notify others that user stopped typing on disconnect
+        await manager.broadcast_to_server(server_id, {
+            "type": "stop_typing",
+            "user_id": user_id,
+        })
+    except Exception:
+        manager.disconnect(websocket, server_id, user_id)
+
+
+@router.websocket("/ws/dm")
+async def dm_websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for DM notifications and typing indicators.
+    Not tied to a specific server - receives all DM-related events.
+
+    Client sends:
+      - {"type": "auth", "token": "<jwt>"}  (must be first message)
+      - {"type": "dm_typing", "conversation_id": <int>}
+      - {"type": "dm_stop_typing", "conversation_id": <int>}
+
+    Server sends:
+      - {"type": "dm_new_message", "conversation_id": <int>, "message": {...}}
+      - {"type": "dm_message_edited", "conversation_id": <int>, ...}
+      - {"type": "dm_message_deleted", "conversation_id": <int>, ...}
+      - {"type": "dm_typing", "conversation_id": <int>, "user_id": <int>, "username": "<str>"}
+      - {"type": "dm_stop_typing", "conversation_id": <int>, "user_id": <int>}
+      - {"type": "friend_request", "from_user": {...}}
+      - {"type": "friend_accepted", "friend": {...}}
+    """
+    await websocket.accept()
+
+    # Wait for authentication message
+    try:
+        auth_data = await websocket.receive_json()
+    except Exception:
+        await websocket.close(code=4001, reason="Expected auth message")
+        return
+
+    if auth_data.get("type") != "auth" or not auth_data.get("token"):
+        try:
+            await websocket.close(code=4001, reason="First message must be auth")
+        except Exception:
+            pass
+        return
+
+    # Validate token
+    with Session(engine) as session:
+        user = authenticate_ws_token(auth_data["token"], session)
+        if not user:
+            try:
+                await websocket.close(code=4003, reason="Invalid token")
+            except Exception:
+                pass
+            return
+        user_id = user.id
+        username = user.username
+
+    # Register DM connection
+    await manager.connect_dm(websocket, user_id)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type")
+
+            if msg_type == "dm_typing":
+                conversation_id = data.get("conversation_id")
+                if conversation_id is not None:
+                    # Get conversation members and notify them
+                    with Session(engine) as session:
+                        members = session.exec(
+                            select(ConversationMember).where(
+                                ConversationMember.conversation_id == conversation_id
+                            )
+                        ).all()
+                        for m in members:
+                            if m.user_id != user_id:
+                                await manager.send_to_user(m.user_id, {
+                                    "type": "dm_typing",
+                                    "conversation_id": conversation_id,
+                                    "user_id": user_id,
+                                    "username": username,
+                                })
+
+            elif msg_type == "dm_stop_typing":
+                conversation_id = data.get("conversation_id")
+                if conversation_id is not None:
+                    with Session(engine) as session:
+                        members = session.exec(
+                            select(ConversationMember).where(
+                                ConversationMember.conversation_id == conversation_id
+                            )
+                        ).all()
+                        for m in members:
+                            if m.user_id != user_id:
+                                await manager.send_to_user(m.user_id, {
+                                    "type": "dm_stop_typing",
+                                    "conversation_id": conversation_id,
+                                    "user_id": user_id,
+                                })
+
+    except WebSocketDisconnect:
+        manager.disconnect_dm(websocket, user_id)
+    except Exception:
+        manager.disconnect_dm(websocket, user_id)

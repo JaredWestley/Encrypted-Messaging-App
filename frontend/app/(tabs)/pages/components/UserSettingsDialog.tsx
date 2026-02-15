@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { YStack, XStack, Text, Button, Input, Avatar, Separator, ScrollView } from "tamagui";
-import { Modal, TouchableOpacity, Image, Alert as RNAlert } from "react-native";
+import { YStack, XStack, Text, Button, Input, Separator, ScrollView } from "tamagui";
+import { Modal, TouchableOpacity, Image, Alert as RNAlert, Platform } from "react-native";
 import { X } from "@tamagui/lucide-icons";
 import * as ImagePicker from "expo-image-picker";
 import { updateUserSettings, fetchCurrentUser, uploadUserIcon } from "../../utils/api";
@@ -163,11 +163,19 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
     const match = /\.(\w+)$/.exec(filename);
     const type = match ? `image/${match[1]}` : "image/jpeg";
 
-    formData.append("file", {
-      uri: previewUri,
-      name: filename,
-      type,
-    } as any);
+    if (Platform.OS === "web") {
+      // On web, fetch the URI as a blob and append it properly
+      const response = await fetch(previewUri);
+      const blob = await response.blob();
+      formData.append("file", blob, filename);
+    } else {
+      // On native, the { uri, name, type } object works with React Native's FormData
+      formData.append("file", {
+        uri: previewUri,
+        name: filename,
+        type,
+      } as any);
+    }
 
     try {
       const res = await uploadUserIcon(formData, token, logout);
@@ -285,13 +293,19 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
                   style={{ width: 80, height: 80, borderRadius: 40, marginBottom: 8 }}
                 />
               ) : (
-                <Avatar circular size="$10" backgroundColor="#757575">
-                  <Avatar.Fallback backgroundColor="#757575">
-                    <Text fontSize="$9" fontWeight="700" color="white">
-                      {getFirstLetter(currentUsername)}
-                    </Text>
-                  </Avatar.Fallback>
-                </Avatar>
+                <YStack
+                  width={80}
+                  height={80}
+                  borderRadius={40}
+                  backgroundColor="#757575"
+                  justifyContent="center"
+                  alignItems="center"
+                  marginBottom={8}
+                >
+                  <Text fontSize="$9" fontWeight="700" color="white">
+                    {getFirstLetter(currentUsername)}
+                  </Text>
+                </YStack>
               )}
 
               <XStack>

@@ -140,22 +140,40 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   useEffect(() => {
     if (!serverId || !token) return;
     setLoading(true);
+    setError(null);
 
-    fetchUsersInServer(token, serverId, logout)
-      .then((fetchedMembers) => {
+    const loadData = async () => {
+      try {
+        const fetchedMembers = await fetchUsersInServer(token, serverId, logout);
         setMembers(fetchedMembers);
-        return fetchUserRoles(token, serverId, userId!, logout);
-      })
-      .then((roleData) => {
-        const permissions = roleData.flatMap((role) => role.permissions || []);
+      } catch {
+        setError("Unable to load members");
+      }
+
+      try {
+        const roleData = await fetchUserRoles(token, serverId, userId!, logout);
+        const permissions = roleData.flatMap((role: any) => role.permissions || []);
         const isOwner = userId === selectedServerOwnerId;
         setCanKick(isOwner || permissions.includes("KICK_MEMBERS"));
         setCanBan(isOwner || permissions.includes("BAN_MEMBERS"));
-        return fetchBannedUsers(token, serverId, logout);
-      })
-      .then((banned) => setBannedUsers(banned))
-      .catch(() => setError("Unable to load members or permissions"))
-      .finally(() => setLoading(false));
+      } catch {
+        // If we can't load permissions, fall back to owner check only
+        const isOwner = userId === selectedServerOwnerId;
+        setCanKick(isOwner);
+        setCanBan(isOwner);
+      }
+
+      try {
+        const banned = await fetchBannedUsers(token, serverId, logout);
+        setBannedUsers(banned);
+      } catch {
+        setBannedUsers([]);
+      }
+
+      setLoading(false);
+    };
+
+    loadData();
   }, [serverId, token, logout, userId, selectedServerOwnerId]);
 
   const unbanUser = (targetUserId: number, username: string) => {

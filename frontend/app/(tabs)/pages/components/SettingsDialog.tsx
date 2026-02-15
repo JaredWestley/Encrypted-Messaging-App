@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { YStack, XStack, Text, Button, Input, ScrollView, Card, Tabs } from "tamagui";
+import { YStack, XStack, Text, Button, Input, ScrollView, Card } from "tamagui";
 import { Modal, TouchableOpacity, Alert as RNAlert, useWindowDimensions } from "react-native";
 import { X } from "@tamagui/lucide-icons";
 import { leaveServer, generateInviteLink } from "../../utils/api";
@@ -86,10 +86,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
     try {
       setLoading(true);
       const res = await generateInviteLink(token, serverId, logout);
-      // Note: In React Native, you might need to construct this differently
-      // For now using a placeholder - you'd need to handle deep linking
-      const generatedLink = `yourapp://invite/${res.token}`;
-      setInviteLink(generatedLink);
+      setInviteLink(res.token);
       setInviteRefreshCounter((prev) => prev + 1);
     } catch (err: any) {
       RNAlert.alert("Error", err.message || "Failed to generate invite");
@@ -100,7 +97,10 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
   const pages = ["Admin", "Invite", "Roles", "Server Settings"] as const;
 
-  const renderContent = () => (
+  // Whether the current page needs its own flex layout (not wrapped in ScrollView)
+  const isFlexPage = selectedPage === "Roles";
+
+  const renderScrollableContent = () => (
     <>
       {selectedPage === "Admin" && (
         <AdminPanel
@@ -112,7 +112,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
       )}
 
       {selectedPage === "Invite" && (
-        <YStack>
+        <YStack gap="$3">
           <Text fontSize="$6" fontWeight="700" color="white">
             Invite People to Server
           </Text>
@@ -126,13 +126,13 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
           </Button>
 
           {inviteLink && (
-            <YStack>
-              <Text fontSize="$3" color="#b9bbbe">
-                Newly generated invite:
+            <YStack marginTop="$2">
+              <Text fontSize="$3" color="#b9bbbe" marginBottom="$1">
+                Newly generated invite token:
               </Text>
               <Card backgroundColor="#36393f" padding="$3" borderRadius="$3">
-                <XStack justifyContent="space-between" alignItems="center">
-                  <Text color="white" fontSize="$3" flex={1} numberOfLines={1}>
+                <XStack justifyContent="space-between" alignItems="center" gap="$2">
+                  <Text color="white" fontSize="$3" flex={1} selectable>
                     {inviteLink}
                   </Text>
                   <Button
@@ -140,9 +140,15 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                     backgroundColor="transparent"
                     borderWidth={1}
                     borderColor="#5865F2"
-                    onPress={() => {
-                      // TODO: Implement clipboard copy
-                      RNAlert.alert("Copied", "Invite link copied to clipboard");
+                    onPress={async () => {
+                      try {
+                        if (typeof navigator !== "undefined" && navigator.clipboard) {
+                          await navigator.clipboard.writeText(inviteLink);
+                        }
+                        RNAlert.alert("Copied", "Invite token copied to clipboard");
+                      } catch {
+                        RNAlert.alert("Info", "Select and copy the token manually");
+                      }
                     }}
                   >
                     Copy
@@ -166,10 +172,6 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
         </YStack>
       )}
 
-      {selectedPage === "Roles" && (
-        <RolesSettings serverId={serverId} token={token} logout={logout} />
-      )}
-
       {selectedPage === "Server Settings" && (
         <ServerSettings
           serverId={serverId}
@@ -190,9 +192,17 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
     </>
   );
 
+  const renderFlexContent = () => (
+    <>
+      {selectedPage === "Roles" && (
+        <RolesSettings serverId={serverId} token={token} logout={logout} />
+      )}
+    </>
+  );
+
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
-      <YStack flex={1} backgroundColor="rgba(0,0,0,0.8)">
+    <Modal visible={open} animationType="slide" onRequestClose={onClose}>
+      <YStack flex={1} backgroundColor="#1e1f22">
         {/* Header */}
         <XStack
           height={64 + insets.top}
@@ -215,7 +225,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
         {isMobile ? (
           /* Mobile: Horizontal tab bar + vertical content */
-          <YStack flex={1}>
+          <YStack flex={1} backgroundColor="#2f3136">
             <ScrollView horizontal showsHorizontalScrollIndicator={false} backgroundColor="#202225">
               <XStack padding="$2" gap="$2">
                 {pages.map((page) => (
@@ -249,14 +259,20 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 </TouchableOpacity>
               </XStack>
             </ScrollView>
-            <ScrollView
-              flex={1}
-              backgroundColor="#2f3136"
-              padding="$3"
-              contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
-            >
-              {renderContent()}
-            </ScrollView>
+            {isFlexPage ? (
+              <YStack flex={1}>
+                {renderFlexContent()}
+              </YStack>
+            ) : (
+              <ScrollView
+                flex={1}
+                backgroundColor="#2f3136"
+                padding="$3"
+                contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
+              >
+                {renderScrollableContent()}
+              </ScrollView>
+            )}
           </YStack>
         ) : (
           /* Desktop: Sidebar + content */
@@ -294,9 +310,15 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
               </YStack>
             </YStack>
 
-            <ScrollView flex={1} backgroundColor="#2f3136" padding="$4">
-              {renderContent()}
-            </ScrollView>
+            {isFlexPage ? (
+              <YStack flex={1} backgroundColor="#2f3136">
+                {renderFlexContent()}
+              </YStack>
+            ) : (
+              <ScrollView flex={1} backgroundColor="#2f3136" padding="$4">
+                {renderScrollableContent()}
+              </ScrollView>
+            )}
           </XStack>
         )}
       </YStack>

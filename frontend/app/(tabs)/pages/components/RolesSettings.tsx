@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
-import { YStack, XStack, Text, Input, Button, ScrollView, Spinner, Checkbox, Label, Separator } from "tamagui";
-import { TouchableOpacity, Alert as RNAlert } from "react-native";
-import { Trash2 } from "@tamagui/lucide-icons";
+import { YStack, XStack, Text, Input, Button, ScrollView, Spinner, Separator } from "tamagui";
+import { TouchableOpacity, Alert as RNAlert, useWindowDimensions } from "react-native";
+import { Trash2, ChevronLeft, Check } from "@tamagui/lucide-icons";
 import {
   fetchRoles,
   createRole as apiCreateRole,
@@ -42,6 +42,9 @@ interface RolesSettingsProps {
 }
 
 const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }) => {
+  const { width } = useWindowDimensions();
+  const isMobile = width < 600;
+
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
@@ -50,21 +53,33 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
   const [newRoleName, setNewRoleName] = useState("");
   const [availablePermissions, setAvailablePermissions] = useState<string[]>([]);
   const originalUserIdsRef = useRef<number[]>([]);
+  const [snackbarVisible, setSnackbarVisible] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState("");
+
+  const showToast = (message: string) => {
+    setSnackbarMessage(message);
+    setSnackbarVisible(true);
+    setTimeout(() => setSnackbarVisible(false), 3000);
+  };
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const rolesData = await fetchRoles(token, serverId, logout);
-        const usersData = await fetchUsersInServer(token, serverId, logout);
-        const permissionsData = await fetchPermissions(token, logout);
+        const [rolesData, usersData, permissionsData] = await Promise.all([
+          fetchRoles(token, serverId, logout),
+          fetchUsersInServer(token, serverId, logout),
+          fetchPermissions(token, logout),
+        ]);
 
         setRoles(rolesData);
         setUsers(usersData);
         setAvailablePermissions(permissionsData);
-        if (rolesData.length > 0) setSelectedRoleId(rolesData[0].id);
+        if (rolesData.length > 0 && !selectedRoleId) {
+          setSelectedRoleId(rolesData[0].id);
+        }
       } catch (error: any) {
-        RNAlert.alert("Error", error.message);
+        RNAlert.alert("Error", error.message || "Failed to load roles data");
       } finally {
         setLoading(false);
       }
@@ -78,7 +93,7 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
     if (selectedRole) {
       originalUserIdsRef.current = selectedRole.users?.map((u) => u.id) || [];
     }
-  }, [selectedRole]);
+  }, [selectedRoleId]);
 
   const updateRoleName = (name: string) => {
     if (!selectedRole) return;
@@ -96,9 +111,9 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
 
   const toggleUserRole = (user: User) => {
     if (!selectedRole) return;
-    const users = selectedRole.users ?? [];
-    const hasUser = users.some((u) => u.id === user.id);
-    const newUsers = hasUser ? users.filter((u) => u.id !== user.id) : [...users, user];
+    const roleUsers = selectedRole.users ?? [];
+    const hasUser = roleUsers.some((u) => u.id === user.id);
+    const newUsers = hasUser ? roleUsers.filter((u) => u.id !== user.id) : [...roleUsers, user];
     setRoles(roles.map((r) => (r.id === selectedRole.id ? { ...r, users: newUsers } : r)));
   };
 
@@ -106,6 +121,7 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
     if (!selectedRole) return;
     setSaving(true);
     try {
+      // Update role name and permissions via PUT
       await apiUpdateRole(
         token,
         serverId,
@@ -113,26 +129,26 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
         selectedRole.name,
         selectedRole.permissions,
         [],
-        logout,
-        selectedRole.is_default || false
+        logout
       );
 
+      // Diff user assignments and apply changes
       const newUserIds = selectedRole.users?.map((u) => u.id) || [];
       const addedUserIds = newUserIds.filter((id) => !originalUserIdsRef.current.includes(id));
       const removedUserIds = originalUserIdsRef.current.filter((id) => !newUserIds.includes(id));
 
-      for (const userId of addedUserIds) {
-        await assignRole(token, serverId, userId, selectedRole.id, logout);
+      for (const uid of addedUserIds) {
+        await assignRole(token, serverId, uid, selectedRole.id, logout);
       }
 
-      for (const userId of removedUserIds) {
-        await unassignRole(token, serverId, userId, selectedRole.id, logout);
+      for (const uid of removedUserIds) {
+        await unassignRole(token, serverId, uid, selectedRole.id, logout);
       }
 
-      RNAlert.alert("Success", "Role saved successfully");
       originalUserIdsRef.current = newUserIds;
+      showToast("Role saved successfully");
     } catch (error: any) {
-      RNAlert.alert("Error", error.message);
+      RNAlert.alert("Error", error.message || "Failed to save role");
     } finally {
       setSaving(false);
     }
@@ -146,11 +162,13 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
     setSaving(true);
     try {
       const createdRole = await apiCreateRole(token, serverId, newRoleName.trim(), logout);
-      setRoles([...roles, createdRole]);
-      setSelectedRoleId(createdRole.id);
+      const newRole = { ...createdRole, permissions: createdRole.permissions || [], users: createdRole.users || [] };
+      setRoles([...roles, newRole]);
+      setSelectedRoleId(newRole.id);
       setNewRoleName("");
+      showToast("Role created");
     } catch (error: any) {
-      RNAlert.alert("Error", error.message);
+      RNAlert.alert("Error", error.message || "Failed to create role");
     } finally {
       setSaving(false);
     }
@@ -170,10 +188,12 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
             setSaving(true);
             try {
               await apiDeleteRole(token, serverId, selectedRole.id, logout);
-              setRoles(roles.filter((r) => r.id !== selectedRole.id));
-              setSelectedRoleId(roles.length > 1 ? roles[0].id : null);
+              const remaining = roles.filter((r) => r.id !== selectedRole.id);
+              setRoles(remaining);
+              setSelectedRoleId(remaining.length > 0 ? remaining[0].id : null);
+              showToast("Role deleted");
             } catch (error: any) {
-              RNAlert.alert("Error", error.message);
+              RNAlert.alert("Error", error.message || "Failed to delete role");
             } finally {
               setSaving(false);
             }
@@ -185,154 +205,250 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
 
   if (loading) {
     return (
-      <YStack flex={1} justifyContent="center" alignItems="center">
+      <YStack flex={1} justifyContent="center" alignItems="center" padding="$4">
         <Spinner color="white" size="large" />
       </YStack>
     );
   }
 
-  return (
-    <XStack flex={1} height="100%">
-      {/* Roles List */}
-      <YStack width={200} backgroundColor="#202225" padding="$2">
-        <Text fontSize="$6" fontWeight="700" color="white" marginBottom="$2">
-          Roles
-        </Text>
-        <ScrollView flex={1}>
-          <YStack>
-            {roles.map((role) => (
-              <TouchableOpacity key={role.id} onPress={() => setSelectedRoleId(role.id)}>
-                <YStack
-                  padding="$3"
-                  backgroundColor={role.id === selectedRoleId ? "#5865F2" : "transparent"}
-                  borderRadius="$2"
-                  pressStyle={{
-                    backgroundColor: "#40444b",
-                  }}
-                >
-                  <Text color="white">{role.name}</Text>
-                </YStack>
-              </TouchableOpacity>
-            ))}
-          </YStack>
-        </ScrollView>
+  // Render the role list (sidebar on desktop, full view on mobile when no role selected)
+  const renderRoleList = () => (
+    <YStack flex={isMobile && !selectedRoleId ? 1 : undefined} width={isMobile ? "100%" : 200} backgroundColor="#202225" padding="$2">
+      <Text fontSize="$5" fontWeight="700" color="white" marginBottom="$2">
+        Roles ({roles.length})
+      </Text>
+      <ScrollView flex={1}>
+        <YStack gap="$1">
+          {roles.map((role) => (
+            <TouchableOpacity key={role.id} onPress={() => setSelectedRoleId(role.id)}>
+              <YStack
+                padding="$3"
+                backgroundColor={role.id === selectedRoleId ? "#5865F2" : "transparent"}
+                borderRadius="$2"
+              >
+                <Text color="white" fontSize="$3">{role.name}</Text>
+                <Text color={role.id === selectedRoleId ? "rgba(255,255,255,0.7)" : "#72767d"} fontSize="$1">
+                  {role.users?.length || 0} members · {role.permissions?.length || 0} permissions
+                </Text>
+              </YStack>
+            </TouchableOpacity>
+          ))}
 
-        <YStack marginTop="$2">
-          <Input
-            placeholder="New Role Name"
-            value={newRoleName}
-            onChangeText={setNewRoleName}
-            backgroundColor="#40444b"
-            borderWidth={0}
-            color="white"
-          />
+          {roles.length === 0 && (
+            <YStack padding="$3">
+              <Text color="#72767d" fontSize="$3" textAlign="center">
+                No roles yet
+              </Text>
+            </YStack>
+          )}
+        </YStack>
+      </ScrollView>
+
+      <YStack marginTop="$2" gap="$2">
+        <Input
+          placeholder="New role name"
+          value={newRoleName}
+          onChangeText={setNewRoleName}
+          backgroundColor="#40444b"
+          borderWidth={0}
+          color="white"
+          fontSize="$3"
+        />
+        <Button
+          backgroundColor="#5865F2"
+          onPress={createRole}
+          disabled={saving || !newRoleName.trim()}
+          disabledStyle={{ opacity: 0.5 }}
+          size="$3"
+        >
+          Create Role
+        </Button>
+      </YStack>
+    </YStack>
+  );
+
+  // Render the role detail editor
+  const renderRoleDetail = () => {
+    if (!selectedRole) {
+      return (
+        <YStack flex={1} justifyContent="center" alignItems="center" padding="$4">
+          <Text color="#72767d" fontSize="$4">Select a role to edit</Text>
+        </YStack>
+      );
+    }
+
+    return (
+      <ScrollView flex={1} backgroundColor="#2f3136" padding="$3">
+        <YStack gap="$3">
+          {/* Back button on mobile */}
+          {isMobile && (
+            <TouchableOpacity onPress={() => setSelectedRoleId(null)}>
+              <XStack alignItems="center" gap="$2">
+                <ChevronLeft size={20} color="#b9bbbe" />
+                <Text color="#b9bbbe" fontSize="$3">Back to roles</Text>
+              </XStack>
+            </TouchableOpacity>
+          )}
+
+          {/* Role Name + Delete */}
+          <XStack alignItems="center" gap="$2">
+            <Input
+              flex={1}
+              value={selectedRole.name}
+              onChangeText={updateRoleName}
+              backgroundColor="#202225"
+              borderWidth={0}
+              color="white"
+              fontSize="$4"
+            />
+            <Button
+              circular
+              size="$4"
+              backgroundColor="#f04747"
+              icon={<Trash2 size={18} color="white" />}
+              onPress={deleteRole}
+              disabled={saving}
+            />
+          </XStack>
+
+          <Separator borderColor="#444" />
+
+          {/* Permissions */}
+          <YStack gap="$2">
+            <Text fontSize="$4" fontWeight="600" color="white">
+              Permissions
+            </Text>
+            <YStack backgroundColor="#202225" padding="$2" borderRadius="$2" gap="$1">
+              {availablePermissions.map((perm) => {
+                const active = selectedRole.permissions.includes(perm);
+                return (
+                  <TouchableOpacity key={perm} onPress={() => togglePermission(perm)}>
+                    <XStack
+                      padding="$2"
+                      borderRadius="$2"
+                      alignItems="center"
+                      gap="$2"
+                      backgroundColor={active ? "rgba(88,101,242,0.15)" : "transparent"}
+                    >
+                      <YStack
+                        width={22}
+                        height={22}
+                        borderRadius={4}
+                        borderWidth={2}
+                        borderColor={active ? "#5865F2" : "#72767d"}
+                        backgroundColor={active ? "#5865F2" : "transparent"}
+                        justifyContent="center"
+                        alignItems="center"
+                      >
+                        {active && <Check size={14} color="white" />}
+                      </YStack>
+                      <Text color="white" fontSize="$3">
+                        {PERMISSION_LABELS[perm] || perm}
+                      </Text>
+                    </XStack>
+                  </TouchableOpacity>
+                );
+              })}
+            </YStack>
+          </YStack>
+
+          <Separator borderColor="#444" />
+
+          {/* Assigned Users */}
+          <YStack gap="$2">
+            <Text fontSize="$4" fontWeight="600" color="white">
+              Assigned Users
+            </Text>
+            <YStack backgroundColor="#202225" padding="$2" borderRadius="$2" gap="$1">
+              {users.map((user) => {
+                const assigned = selectedRole.users?.some((u) => u.id === user.id) ?? false;
+                return (
+                  <TouchableOpacity key={user.id} onPress={() => toggleUserRole(user)}>
+                    <XStack
+                      padding="$2"
+                      borderRadius="$2"
+                      alignItems="center"
+                      gap="$2"
+                      backgroundColor={assigned ? "rgba(88,101,242,0.15)" : "transparent"}
+                    >
+                      <YStack
+                        width={22}
+                        height={22}
+                        borderRadius={4}
+                        borderWidth={2}
+                        borderColor={assigned ? "#5865F2" : "#72767d"}
+                        backgroundColor={assigned ? "#5865F2" : "transparent"}
+                        justifyContent="center"
+                        alignItems="center"
+                      >
+                        {assigned && <Check size={14} color="white" />}
+                      </YStack>
+                      <Text color="white" fontSize="$3">
+                        {user.username}
+                      </Text>
+                    </XStack>
+                  </TouchableOpacity>
+                );
+              })}
+              {users.length === 0 && (
+                <Text color="#72767d" fontSize="$3" padding="$2">
+                  No members in this server
+                </Text>
+              )}
+            </YStack>
+          </YStack>
+
+          {/* Save Button */}
           <Button
             backgroundColor="#5865F2"
-            onPress={createRole}
+            onPress={saveRole}
             disabled={saving}
+            size="$4"
+            pressStyle={{ backgroundColor: "#4752C4" }}
           >
-            Create Role
+            {saving ? "Saving..." : "Save Changes"}
           </Button>
         </YStack>
-      </YStack>
+      </ScrollView>
+    );
+  };
 
-      {/* Role Details */}
-      <ScrollView flex={1} backgroundColor="#2f3136" padding="$3">
-        {!selectedRole ? (
-          <Text color="white">Select a role to view/edit details.</Text>
-        ) : (
-          <YStack>
-            {/* Role Name */}
-            <XStack alignItems="center">
-              <Input
-                flex={1}
-                value={selectedRole.name}
-                onChangeText={updateRoleName}
-                backgroundColor="#202225"
-                borderWidth={0}
-                color="white"
-              />
-              <Button
-                circular
-                backgroundColor="#f04747"
-                icon={<Trash2 size={20} color="white" />}
-                onPress={deleteRole}
-                disabled={saving}
-              />
-            </XStack>
-
-            <Separator borderColor="#444" />
-
-            {/* Permissions */}
-            <YStack>
-              <Text fontSize="$5" fontWeight="600" color="white">
-                Permissions
-              </Text>
-              <ScrollView maxHeight={200} backgroundColor="#202225" padding="$2" borderRadius="$2">
-                <YStack>
-                  {availablePermissions.map((perm) => (
-                    <XStack key={perm} alignItems="center">
-                      <Checkbox
-                        checked={selectedRole.permissions.includes(perm)}
-                        onCheckedChange={() => togglePermission(perm)}
-                        size="$4"
-                      >
-                        <Checkbox.Indicator>
-                          <Text>✓</Text>
-                        </Checkbox.Indicator>
-                      </Checkbox>
-                      <Label color="white" fontSize="$3">
-                        {PERMISSION_LABELS[perm] || perm}
-                      </Label>
-                    </XStack>
-                  ))}
-                </YStack>
-              </ScrollView>
+  if (isMobile) {
+    // Mobile: show role list or role detail, not both
+    if (selectedRoleId && selectedRole) {
+      return (
+        <YStack flex={1}>
+          {renderRoleDetail()}
+          {snackbarVisible && (
+            <YStack position="absolute" bottom={20} alignSelf="center" backgroundColor="#323232" padding="$3" borderRadius="$3">
+              <Text color="white">{snackbarMessage}</Text>
             </YStack>
-
-            <Separator borderColor="#444" />
-
-            {/* Assigned Users */}
-            <YStack>
-              <Text fontSize="$5" fontWeight="600" color="white">
-                Assigned Users
-              </Text>
-              <ScrollView maxHeight={200} backgroundColor="#202225" padding="$2" borderRadius="$2">
-                <YStack>
-                  {users.map((user) => {
-                    const assigned = selectedRole.users?.some((u) => u.id === user.id) ?? false;
-                    return (
-                      <XStack key={user.id} alignItems="center">
-                        <Checkbox
-                          checked={assigned}
-                          onCheckedChange={() => toggleUserRole(user)}
-                          size="$4"
-                        >
-                          <Checkbox.Indicator>
-                            <Text>✓</Text>
-                          </Checkbox.Indicator>
-                        </Checkbox>
-                        <Label color="white" fontSize="$3">
-                          {user.username}
-                        </Label>
-                      </XStack>
-                    );
-                  })}
-                </YStack>
-              </ScrollView>
-            </YStack>
-
-            <Button
-              backgroundColor="#5865F2"
-              onPress={saveRole}
-              disabled={saving}
-              marginTop="$4"
-            >
-              {saving ? "Saving..." : "Save Changes"}
-            </Button>
+          )}
+        </YStack>
+      );
+    }
+    return (
+      <YStack flex={1}>
+        {renderRoleList()}
+        {snackbarVisible && (
+          <YStack position="absolute" bottom={20} alignSelf="center" backgroundColor="#323232" padding="$3" borderRadius="$3">
+            <Text color="white">{snackbarMessage}</Text>
           </YStack>
         )}
-      </ScrollView>
+      </YStack>
+    );
+  }
+
+  // Desktop: side-by-side layout
+  return (
+    <XStack flex={1} height="100%">
+      {renderRoleList()}
+      {renderRoleDetail()}
+      {snackbarVisible && (
+        <YStack position="absolute" bottom={20} alignSelf="center" backgroundColor="#323232" padding="$3" borderRadius="$3" zIndex={100}>
+          <Text color="white">{snackbarMessage}</Text>
+        </YStack>
+      )}
     </XStack>
   );
 };

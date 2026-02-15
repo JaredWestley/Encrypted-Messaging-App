@@ -35,7 +35,7 @@ const LoginPage: React.FC = () => {
     setLoading(true);
     try {
       const data = await loginUser(username.trim(), password);
-      login(data.access_token, data.username, data.userId);
+      login(data.access_token, data.refresh_token, data.username, data.userId);
       router.replace("/pages/Chat");
     } catch {
       setError("Invalid username or password.");

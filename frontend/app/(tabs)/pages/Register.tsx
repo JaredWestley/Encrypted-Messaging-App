@@ -35,11 +35,42 @@ const RegisterPage: React.FC = () => {
     setShowConfirmPassword((show) => !show);
   };
 
+  const validatePasswordStrength = (pw: string): string | null => {
+    if (pw.length < 8) return "Password must be at least 8 characters long.";
+    if (!/[A-Z]/.test(pw)) return "Password must contain at least one uppercase letter.";
+    if (!/[a-z]/.test(pw)) return "Password must contain at least one lowercase letter.";
+    if (!/\d/.test(pw)) return "Password must contain at least one number.";
+    if (!/[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\;'/`~]/.test(pw)) return "Password must contain at least one special character.";
+    return null;
+  };
+
   const handleRegister = async () => {
     if (!username.trim() || !email.trim() || !password || !confirmPassword) {
       setError("Please fill out all fields.");
       return;
     }
+
+    // Username validation
+    const trimmedUsername = username.trim();
+    if (trimmedUsername.length < 3 || trimmedUsername.length > 32) {
+      setError("Username must be between 3 and 32 characters.");
+      return;
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
+    // Password strength validation
+    const pwError = validatePasswordStrength(password);
+    if (pwError) {
+      setError(pwError);
+      return;
+    }
+
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
       return;
@@ -50,8 +81,8 @@ const RegisterPage: React.FC = () => {
     try {
       await registerUser(username.trim(), email.trim(), password);
       router.replace("/pages/Login");
-    } catch {
-      setError("Registration failed. Please try again.");
+    } catch (err: any) {
+      setError(err.message || "Registration failed. Please try again.");
     } finally {
       setLoading(false);
     }

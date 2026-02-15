@@ -6,7 +6,7 @@ from pydantic import validator
 
 class UserCreate(BaseModel):
     username: str
-    email: str
+    email: EmailStr
     password: str
 
 class UserRead(BaseModel):
@@ -84,7 +84,7 @@ class ServerRead(BaseModel):
     id: int
     name: str
     owner_id: int
-    icon_url: Optional[str] = None  # ✅ Add this
+    icon_url: Optional[str] = None  # Add this
 
     class Config:
         orm_mode = True
@@ -92,3 +92,44 @@ class ServerRead(BaseModel):
 
 class ServerUpdate(BaseModel):
     name: str
+
+
+# ─── Friends & Direct Messages ────────────────────────────────────
+
+class FriendshipRead(BaseModel):
+    id: int
+    user_id: int
+    friend_id: int
+    status: str
+    created_at: datetime
+    friend: Optional[PublicUserRead] = None
+
+    class Config:
+        orm_mode = True
+
+class FriendRequestCreate(BaseModel):
+    friend_username: str
+
+class ConversationRead(BaseModel):
+    id: int
+    name: Optional[str] = None
+    is_group: bool
+    created_at: datetime
+    members: List[PublicUserRead] = []
+
+    class Config:
+        orm_mode = True
+
+class DirectMessageCreate(BaseModel):
+    content: str
+
+class DirectMessageRead(BaseModel):
+    id: int
+    conversation_id: int
+    user_id: int
+    username: str
+    content: str
+    created_at: datetime
+
+    class Config:
+        orm_mode = True

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "expo-router";
 import {
   YStack,
@@ -20,16 +20,18 @@ import {
   Pressable,
   useWindowDimensions,
 } from "react-native";
-import { 
-  Settings, 
-  MoreVertical, 
-  Edit3, 
-  Trash2, 
-  Menu, 
+import {
+  Settings,
+  MoreVertical,
+  Edit3,
+  Trash2,
+  Menu,
   X as CloseIcon,
   Send,
   Hash,
-  Users
+  Users,
+  WifiOff,
+  MessageCircle,
 } from "@tamagui/lucide-icons";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ServerSidebar from "./components/ServerSidebar";
@@ -41,9 +43,20 @@ import {
   deleteMessage,
   updateMessage,
   sendMessage,
+  syncMessages,
   joinServerWithInvite,
+  fetchConversations,
+  fetchConversationMessages,
+  sendDirectMessage,
+  editDirectMessage,
+  deleteDirectMessage,
+  syncDirectMessages,
+  ConversationData,
+  DirectMessageData,
 } from "../utils/api";
 import { useAuth } from "../utils/AuthContext";
+import { useWebSocket } from "../utils/useWebSocket";
+import { useDmWebSocket } from "../utils/useDmWebSocket";
 
 const API_URL = "http://localhost:8000/api";
 
@@ -69,15 +82,16 @@ interface User {
 
 const ChatPage: React.FC = () => {
   const router = useRouter();
-  const { token, username, userId, logout } = useAuth();
+  const { token, username, userId, logout, refreshAccessToken } = useAuth();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  
+
   // Responsive breakpoint
   const isDesktop = width >= 768;
   const isTablet = width >= 600 && width < 768;
   const isMobile = width < 600;
-  
+
+  // Server state
   const [servers, setServers] = useState<Server[]>([]);
   const [selectedServer, setSelectedServer] = useState<Server | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -94,15 +108,296 @@ const ChatPage: React.FC = () => {
   const [menuMessageId, setMenuMessageId] = useState<number | null>(null);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
-  
+
   // Mobile sidebar states
   const [showServerSidebar, setShowServerSidebar] = useState(false);
   const [showUserSidebar, setShowUserSidebar] = useState(false);
+
+  // WebSocket & real-time state
+  const [wsConnected, setWsConnected] = useState(false);
+  const [typingUsers, setTypingUsers] = useState<Map<number, string>>(new Map());
+  const typingTimeoutsRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const lastMessageIdRef = useRef<number | null>(null);
+  const typingThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wasDisconnectedRef = useRef(false);
+
+  // ─── DM State ──────────────────────────────────────────────────
+  const [conversations, setConversations] = useState<ConversationData[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState<number | null>(null);
+  const [dmMessages, setDmMessages] = useState<Message[]>([]);
+  const [dmTypingUsers, setDmTypingUsers] = useState<Map<number, string>>(new Map());
+  const dmTypingTimeoutsRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const lastDmMessageIdRef = useRef<number | null>(null);
+  const dmTypingThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Determine which mode we're in
+  const isDmMode = selectedConversationId !== null && selectedServer === null;
+
+  // Get the active conversation data
+  const activeConversation = conversations.find(c => c.id === selectedConversationId);
+
+  const getConversationDisplayName = (convo: ConversationData): string => {
+    if (convo.name) return convo.name;
+    const other = convo.members.find(m => m.id !== userId);
+    return other?.username || "Unknown";
+  };
+
+  // Track the last message ID for sync
+  useEffect(() => {
+    if (!isDmMode && messages.length > 0) {
+      lastMessageIdRef.current = Math.max(...messages.map(m => m.id));
+    }
+  }, [messages, isDmMode]);
+
+  useEffect(() => {
+    if (isDmMode && dmMessages.length > 0) {
+      lastDmMessageIdRef.current = Math.max(...dmMessages.map(m => m.id));
+    }
+  }, [dmMessages, isDmMode]);
+
+  // ─── Server WebSocket callbacks ──────────────────────────────
+  const handleWsNewMessage = useCallback((message: any) => {
+    setMessages((prev) => {
+      if (prev.some(m => m.id === message.id)) return prev;
+      return [...prev, message];
+    });
+  }, []);
+
+  const handleWsMessageEdited = useCallback((messageId: number, content: string) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, content } : m))
+    );
+  }, []);
+
+  const handleWsMessageDeleted = useCallback((messageId: number) => {
+    setMessages((prev) => prev.filter((m) => m.id !== messageId));
+  }, []);
+
+  const handleWsTyping = useCallback((uid: number, uname: string) => {
+    if (uid === userId) return;
+    setTypingUsers((prev) => {
+      const next = new Map(prev);
+      next.set(uid, uname);
+      return next;
+    });
+    const existing = typingTimeoutsRef.current.get(uid);
+    if (existing) clearTimeout(existing);
+    typingTimeoutsRef.current.set(
+      uid,
+      setTimeout(() => {
+        setTypingUsers((prev) => {
+          const next = new Map(prev);
+          next.delete(uid);
+          return next;
+        });
+        typingTimeoutsRef.current.delete(uid);
+      }, 3000)
+    );
+  }, [userId]);
+
+  const handleWsStopTyping = useCallback((uid: number) => {
+    setTypingUsers((prev) => {
+      const next = new Map(prev);
+      next.delete(uid);
+      return next;
+    });
+    const existing = typingTimeoutsRef.current.get(uid);
+    if (existing) {
+      clearTimeout(existing);
+      typingTimeoutsRef.current.delete(uid);
+    }
+  }, []);
+
+  // Load messages function
+  const loadMessagesRef = useRef<() => Promise<void>>();
+  loadMessagesRef.current = async () => {
+    if (!token || !selectedServer) return;
+    try {
+      const data = await apiRequest<Message[]>(
+        `${API_URL}/messages?server_id=${selectedServer.id}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+        logout,
+        refreshAccessToken
+      );
+      setMessages(data);
+    } catch {
+      setError("Failed to load messages");
+    }
+  };
+
+  const handleConnectionChange = useCallback(async (connected: boolean) => {
+    setWsConnected(connected);
+    if (connected && wasDisconnectedRef.current && selectedServer && token) {
+      const lastId = lastMessageIdRef.current;
+      if (lastId !== null) {
+        try {
+          const missed = await syncMessages(token, selectedServer.id, lastId, logout);
+          if (missed.length > 0) {
+            setMessages((prev) => {
+              const existingIds = new Set(prev.map(m => m.id));
+              const newMsgs = missed.filter(m => !existingIds.has(m.id));
+              return [...prev, ...newMsgs];
+            });
+          }
+        } catch {
+          loadMessagesRef.current?.();
+        }
+      } else {
+        loadMessagesRef.current?.();
+      }
+    }
+    if (!connected) {
+      wasDisconnectedRef.current = true;
+      setTypingUsers(new Map());
+    }
+  }, [selectedServer, token, logout]);
+
+  const { isConnected, sendTyping, sendStopTyping, sendAck } = useWebSocket({
+    serverId: selectedServer?.id ?? null,
+    token,
+    onNewMessage: handleWsNewMessage,
+    onMessageEdited: handleWsMessageEdited,
+    onMessageDeleted: handleWsMessageDeleted,
+    onTyping: handleWsTyping,
+    onStopTyping: handleWsStopTyping,
+    onConnectionChange: handleConnectionChange,
+  });
+
+  // ─── DM WebSocket callbacks ──────────────────────────────────
+  const handleDmNewMessage = useCallback((conversationId: number, message: any) => {
+    if (conversationId === selectedConversationId) {
+      setDmMessages((prev) => {
+        if (prev.some(m => m.id === message.id)) return prev;
+        return [...prev, {
+          id: message.id,
+          username: message.username,
+          content: message.content,
+          user_id: message.user_id,
+          timestamp: message.created_at,
+        }];
+      });
+    }
+    // Refresh conversations list to update order
+    loadConversations();
+  }, [selectedConversationId]);
+
+  const handleDmMessageEdited = useCallback((conversationId: number, messageId: number, content: string) => {
+    if (conversationId === selectedConversationId) {
+      setDmMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, content } : m))
+      );
+    }
+  }, [selectedConversationId]);
+
+  const handleDmMessageDeleted = useCallback((conversationId: number, messageId: number) => {
+    if (conversationId === selectedConversationId) {
+      setDmMessages((prev) => prev.filter((m) => m.id !== messageId));
+    }
+  }, [selectedConversationId]);
+
+  const handleDmTyping = useCallback((conversationId: number, uid: number, uname: string) => {
+    if (uid === userId || conversationId !== selectedConversationId) return;
+    setDmTypingUsers((prev) => {
+      const next = new Map(prev);
+      next.set(uid, uname);
+      return next;
+    });
+    const existing = dmTypingTimeoutsRef.current.get(uid);
+    if (existing) clearTimeout(existing);
+    dmTypingTimeoutsRef.current.set(
+      uid,
+      setTimeout(() => {
+        setDmTypingUsers((prev) => {
+          const next = new Map(prev);
+          next.delete(uid);
+          return next;
+        });
+        dmTypingTimeoutsRef.current.delete(uid);
+      }, 3000)
+    );
+  }, [userId, selectedConversationId]);
+
+  const handleDmStopTyping = useCallback((conversationId: number, uid: number) => {
+    if (conversationId !== selectedConversationId) return;
+    setDmTypingUsers((prev) => {
+      const next = new Map(prev);
+      next.delete(uid);
+      return next;
+    });
+    const existing = dmTypingTimeoutsRef.current.get(uid);
+    if (existing) {
+      clearTimeout(existing);
+      dmTypingTimeoutsRef.current.delete(uid);
+    }
+  }, [selectedConversationId]);
+
+  const handleFriendRequest = useCallback((fromUser: any) => {
+    showSnackbar(`${fromUser.username} sent you a friend request!`);
+  }, []);
+
+  const handleFriendAccepted = useCallback((friend: any) => {
+    showSnackbar(`${friend.username} accepted your friend request!`);
+  }, []);
+
+  const { isConnected: dmWsConnected, sendDmTyping, sendDmStopTyping } = useDmWebSocket({
+    token,
+    onDmNewMessage: handleDmNewMessage,
+    onDmMessageEdited: handleDmMessageEdited,
+    onDmMessageDeleted: handleDmMessageDeleted,
+    onDmTyping: handleDmTyping,
+    onDmStopTyping: handleDmStopTyping,
+    onFriendRequest: handleFriendRequest,
+    onFriendAccepted: handleFriendAccepted,
+  });
+
+  // Clear typing users when switching contexts
+  useEffect(() => {
+    setTypingUsers(new Map());
+    wasDisconnectedRef.current = false;
+  }, [selectedServer?.id]);
+
+  useEffect(() => {
+    setDmTypingUsers(new Map());
+  }, [selectedConversationId]);
 
   const showSnackbar = (message: string) => {
     setSnackbarMessage(message);
     setSnackbarVisible(true);
     setTimeout(() => setSnackbarVisible(false), 3000);
+  };
+
+  // ─── Load conversations ──────────────────────────────────────
+  const loadConversations = useCallback(async () => {
+    if (!token) return;
+    try {
+      const data = await fetchConversations(token, logout);
+      setConversations(data);
+    } catch {
+      // Silently fail
+    }
+  }, [token, logout]);
+
+  useEffect(() => {
+    if (token) {
+      loadConversations();
+    }
+  }, [token, loadConversations]);
+
+  // ─── Selection handlers ──────────────────────────────────────
+  const handleSelectServer = (server: Server | null) => {
+    setSelectedServer(server);
+    setSelectedConversationId(null); // Deselect DM when selecting a server
+    setDmMessages([]);
+    setInput("");
+    setEditingMessageId(null);
+  };
+
+  const handleSelectConversation = (conversationId: number) => {
+    setSelectedConversationId(conversationId);
+    setSelectedServer(null); // Deselect server when selecting a DM
+    setMessages([]);
+    setInput("");
+    setEditingMessageId(null);
   };
 
   // Load servers
@@ -111,11 +406,12 @@ const ChatPage: React.FC = () => {
     apiRequest<Server[]>(
       `${API_URL}/servers`,
       { headers: { Authorization: `Bearer ${token}` } },
-      logout
+      logout,
+      refreshAccessToken
     )
       .then((data) => {
         setServers(data);
-        if (!selectedServer && data.length > 0) {
+        if (!selectedServer && !selectedConversationId && data.length > 0) {
           setSelectedServer(data[0]);
         }
       })
@@ -128,7 +424,8 @@ const ChatPage: React.FC = () => {
       apiRequest<Server[]>(
         `${API_URL}/servers`,
         { headers: { Authorization: `Bearer ${token}` } },
-        logout
+        logout,
+        refreshAccessToken
       )
         .then((data) => {
           setServers(data);
@@ -142,72 +439,140 @@ const ChatPage: React.FC = () => {
     }
   }, [didLeaveServer, token, logout]);
 
-  // Load messages
+  // Load server messages
   const loadMessages = async () => {
-    if (!token || !selectedServer) return;
-    try {
-      const data = await apiRequest<Message[]>(
-        `${API_URL}/messages?server_id=${selectedServer.id}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-        logout
-      );
-      setMessages(data);
-    } catch {
-      setError("Failed to load messages");
-    }
+    await loadMessagesRef.current?.();
   };
 
   useEffect(() => {
-    if (!token || !selectedServer) return;
+    if (!token || !selectedServer || isDmMode) return;
     loadMessages();
-    const intervalId = setInterval(loadMessages, 3000);
-    return () => clearInterval(intervalId);
-  }, [token, selectedServer]);
+    if (!isConnected) {
+      const intervalId = setInterval(loadMessages, 5000);
+      return () => clearInterval(intervalId);
+    }
+  }, [token, selectedServer, isConnected, isDmMode]);
+
+  // ─── Load DM messages ────────────────────────────────────────
+  const loadDmMessages = useCallback(async () => {
+    if (!token || !selectedConversationId) return;
+    try {
+      const data = await fetchConversationMessages(token, selectedConversationId, logout);
+      setDmMessages(data.map(m => ({
+        id: m.id,
+        username: m.username,
+        content: m.content,
+        user_id: m.user_id,
+        timestamp: m.created_at,
+      })));
+    } catch {
+      setError("Failed to load messages");
+    }
+  }, [token, selectedConversationId, logout]);
+
+  useEffect(() => {
+    if (!token || !selectedConversationId || !isDmMode) return;
+    loadDmMessages();
+    // Poll as fallback when DM WS disconnected
+    if (!dmWsConnected) {
+      const intervalId = setInterval(loadDmMessages, 5000);
+      return () => clearInterval(intervalId);
+    }
+  }, [token, selectedConversationId, isDmMode, dmWsConnected, loadDmMessages]);
 
   // Auto-scroll to bottom on new messages
+  const currentMessages = isDmMode ? dmMessages : messages;
   useEffect(() => {
-    if (messages.length > 0) {
+    if (currentMessages.length > 0) {
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     }
-  }, [messages]);
+  }, [currentMessages]);
 
+  // ─── Unified send/edit/delete handlers ───────────────────────
   const handleSend = async () => {
-    if (!input.trim() || !token || !selectedServer) return;
+    if (!input.trim() || !token) return;
     setError(null);
-    try {
-      await sendMessage(token, input.trim(), selectedServer.id, userId!, logout);
-      await loadMessages();
-      setInput("");
-    } catch (err: any) {
-      if (err.message.includes("429")) {
-        setError("You're sending messages too quickly. Please wait a moment.");
-      } else {
-        setError("Failed to send message");
+
+    if (isDmMode && selectedConversationId) {
+      // DM send
+      sendDmStopTyping(selectedConversationId);
+      try {
+        const result = await sendDirectMessage(token, selectedConversationId, input.trim(), logout);
+        setInput("");
+        if (!dmWsConnected) {
+          await loadDmMessages();
+        }
+      } catch (err: any) {
+        if (err.message?.includes("429")) {
+          setError("You're sending messages too quickly. Please wait a moment.");
+        } else {
+          setError("Failed to send message");
+        }
+      }
+    } else if (selectedServer) {
+      // Server send
+      sendStopTyping();
+      try {
+        const result: any = await sendMessage(token, input.trim(), selectedServer.id, userId!, logout);
+        setInput("");
+        if (!isConnected) {
+          await loadMessages();
+        } else if (result?.message_id) {
+          sendAck(result.message_id);
+        }
+      } catch (err: any) {
+        if (err.message?.includes("429")) {
+          setError("You're sending messages too quickly. Please wait a moment.");
+        } else {
+          setError("Failed to send message");
+        }
       }
     }
   };
 
   const handleEditSave = async (id: number) => {
-    if (!token || !selectedServer) return;
-    try {
-      await updateMessage(token, id, editContent, logout);
-      await loadMessages();
-      setEditingMessageId(null);
-    } catch {
-      setError("Failed to update message");
+    if (!token) return;
+
+    if (isDmMode && selectedConversationId) {
+      try {
+        await editDirectMessage(token, selectedConversationId, id, editContent, logout);
+        setEditingMessageId(null);
+        if (!dmWsConnected) await loadDmMessages();
+      } catch {
+        setError("Failed to update message");
+      }
+    } else if (selectedServer) {
+      try {
+        await updateMessage(token, id, editContent, logout);
+        setEditingMessageId(null);
+        if (!isConnected) await loadMessages();
+      } catch {
+        setError("Failed to update message");
+      }
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!token || !selectedServer) return;
-    try {
-      await deleteMessage(token, selectedServer.id, id, logout);
-      await loadMessages();
-      setMenuVisible(false);
-    } catch {
-      showSnackbar("Failed to delete message");
+    if (!token) return;
+
+    if (isDmMode && selectedConversationId) {
+      try {
+        await deleteDirectMessage(token, selectedConversationId, id, logout);
+        setMenuVisible(false);
+        if (!dmWsConnected) await loadDmMessages();
+      } catch {
+        showSnackbar("Failed to delete message");
+      }
+    } else if (selectedServer) {
+      try {
+        await deleteMessage(token, selectedServer.id, id, logout);
+        setMenuVisible(false);
+        if (!isConnected) await loadMessages();
+      } catch {
+        showSnackbar("Failed to delete message");
+      }
     }
   };
 
@@ -219,16 +584,15 @@ const ChatPage: React.FC = () => {
   const formatTimestamp = (isoString: string) => {
     const date = new Date(isoString);
     if (isNaN(date.getTime())) return "Invalid date";
-    
+
     if (isMobile) {
-      // Shorter format for mobile
       return date.toLocaleString(undefined, {
         hour: "numeric",
         minute: "numeric",
         hour12: true,
       });
     }
-    
+
     return date.toLocaleString(undefined, {
       hour: "numeric",
       minute: "numeric",
@@ -263,6 +627,54 @@ const ChatPage: React.FC = () => {
       ]);
     }
   };
+
+  const handleInputChange = (text: string) => {
+    setInput(text);
+    if (isDmMode && selectedConversationId) {
+      // DM typing indicator
+      if (text.trim() && !dmTypingThrottleRef.current) {
+        sendDmTyping(selectedConversationId);
+        dmTypingThrottleRef.current = setTimeout(() => {
+          dmTypingThrottleRef.current = null;
+        }, 2000);
+      }
+      if (!text.trim()) {
+        sendDmStopTyping(selectedConversationId);
+        if (dmTypingThrottleRef.current) {
+          clearTimeout(dmTypingThrottleRef.current);
+          dmTypingThrottleRef.current = null;
+        }
+      }
+    } else {
+      // Server typing indicator
+      if (text.trim() && !typingThrottleRef.current) {
+        sendTyping();
+        typingThrottleRef.current = setTimeout(() => {
+          typingThrottleRef.current = null;
+        }, 2000);
+      }
+      if (!text.trim()) {
+        sendStopTyping();
+        if (typingThrottleRef.current) {
+          clearTimeout(typingThrottleRef.current);
+          typingThrottleRef.current = null;
+        }
+      }
+    }
+  };
+
+  // Get the active typing users for the current mode
+  const activeTypingUsers = isDmMode ? dmTypingUsers : typingUsers;
+  const activeWsConnected = isDmMode ? dmWsConnected : isConnected;
+
+  // Determine header title
+  const headerTitle = isDmMode && activeConversation
+    ? getConversationDisplayName(activeConversation)
+    : selectedServer?.name || "";
+
+  const headerIcon = isDmMode
+    ? <MessageCircle size={isMobile ? 20 : 24} color="#72767d" />
+    : <Hash size={isMobile ? 20 : 24} color="#72767d" />;
 
   const renderMessage = ({ item: msg }: { item: Message }) => (
     <Pressable
@@ -343,6 +755,8 @@ const ChatPage: React.FC = () => {
     return null;
   }
 
+  const hasSelection = selectedServer || isDmMode;
+
   return (
     <Theme name="dark">
       <YStack flex={1} backgroundColor="#2f3136" paddingTop={insets.top}>
@@ -352,11 +766,16 @@ const ChatPage: React.FC = () => {
             <ServerSidebar
               servers={servers}
               selectedServer={selectedServer}
-              setSelectedServer={setSelectedServer}
+              setSelectedServer={handleSelectServer}
               setServers={setServers}
               token={token}
               setError={setError}
               logout={logout}
+              selectedConversationId={selectedConversationId}
+              onSelectConversation={handleSelectConversation}
+              conversations={conversations}
+              onConversationsChanged={loadConversations}
+              userId={userId!}
             />
           ) : (
             <Modal
@@ -384,7 +803,7 @@ const ChatPage: React.FC = () => {
                     borderBottomColor="#202225"
                   >
                     <Text fontSize="$6" fontWeight="700" color="white">
-                      Servers
+                      Messages
                     </Text>
                     <TouchableOpacity onPress={() => setShowServerSidebar(false)}>
                       <CloseIcon size={24} color="#b9bbbe" />
@@ -394,13 +813,21 @@ const ChatPage: React.FC = () => {
                     servers={servers}
                     selectedServer={selectedServer}
                     setSelectedServer={(server) => {
-                      setSelectedServer(server);
+                      handleSelectServer(server);
                       setShowServerSidebar(false);
                     }}
                     setServers={setServers}
                     token={token}
                     setError={setError}
                     logout={logout}
+                    selectedConversationId={selectedConversationId}
+                    onSelectConversation={(id) => {
+                      handleSelectConversation(id);
+                      setShowServerSidebar(false);
+                    }}
+                    conversations={conversations}
+                    onConversationsChanged={loadConversations}
+                    userId={userId!}
                   />
                 </YStack>
               </Pressable>
@@ -408,7 +835,7 @@ const ChatPage: React.FC = () => {
           )}
 
           {/* Center Chat Panel */}
-          {selectedServer ? (
+          {hasSelection ? (
             <YStack flex={1} backgroundColor="#36393f">
               {/* Header */}
               <XStack
@@ -426,44 +853,66 @@ const ChatPage: React.FC = () => {
                       <Menu size={24} color="#b9bbbe" />
                     </TouchableOpacity>
                   )}
-                  <Hash size={isMobile ? 20 : 24} color="#72767d" />
-                  <Text 
-                    fontSize={isMobile ? "$5" : "$7"} 
-                    fontWeight="600" 
+                  {headerIcon}
+                  <Text
+                    fontSize={isMobile ? "$5" : "$7"}
+                    fontWeight="600"
                     color="white"
                     numberOfLines={1}
                     flex={1}
                   >
-                    {selectedServer.name}
+                    {headerTitle}
                   </Text>
                 </XStack>
-                <XStack gap="$2">
-                  {!isMobile && (
-                    <Button
-                      size="$3"
-                      backgroundColor="transparent"
-                      borderWidth={1}
-                      borderColor="#5865F2"
-                      icon={<Users size={16} color="#5865F2" />}
-                      onPress={() => setShowUserSidebar(true)}
-                      pressStyle={{
-                        backgroundColor: "rgba(88,101,242,0.1)",
-                      }}
-                    />
+                <XStack gap="$2" alignItems="center">
+                  {!activeWsConnected && (
+                    <XStack
+                      backgroundColor="rgba(240,71,71,0.2)"
+                      paddingHorizontal="$2"
+                      paddingVertical="$1"
+                      borderRadius="$2"
+                      alignItems="center"
+                      gap="$1"
+                    >
+                      <WifiOff size={14} color="#f04747" />
+                      {!isMobile && (
+                        <Text color="#f04747" fontSize="$1" fontWeight="600">
+                          Reconnecting
+                        </Text>
+                      )}
+                    </XStack>
                   )}
-                  <Button
-                    size="$3"
-                    backgroundColor="transparent"
-                    borderWidth={1}
-                    borderColor="#5865F2"
-                    icon={<Settings size={16} color="#5865F2" />}
-                    onPress={() => setIsServerSettingsOpen(true)}
-                    pressStyle={{
-                      backgroundColor: "rgba(88,101,242,0.1)",
-                    }}
-                  >
-                    {!isMobile && "Settings"}
-                  </Button>
+                  {/* Only show Users and Settings buttons in server mode */}
+                  {!isDmMode && (
+                    <>
+                      {!isMobile && (
+                        <Button
+                          size="$3"
+                          backgroundColor="transparent"
+                          borderWidth={1}
+                          borderColor="#5865F2"
+                          icon={<Users size={16} color="#5865F2" />}
+                          onPress={() => setShowUserSidebar(true)}
+                          pressStyle={{
+                            backgroundColor: "rgba(88,101,242,0.1)",
+                          }}
+                        />
+                      )}
+                      <Button
+                        size="$3"
+                        backgroundColor="transparent"
+                        borderWidth={1}
+                        borderColor="#5865F2"
+                        icon={<Settings size={16} color="#5865F2" />}
+                        onPress={() => setIsServerSettingsOpen(true)}
+                        pressStyle={{
+                          backgroundColor: "rgba(88,101,242,0.1)",
+                        }}
+                      >
+                        {!isMobile && "Settings"}
+                      </Button>
+                    </>
+                  )}
                 </XStack>
               </XStack>
 
@@ -475,10 +924,10 @@ const ChatPage: React.FC = () => {
               >
                 <YStack flex={1} backgroundColor="#36393f">
                   {error && (
-                    <Card 
-                      backgroundColor="#f44336" 
-                      padding="$3" 
-                      margin="$3" 
+                    <Card
+                      backgroundColor="#f44336"
+                      padding="$3"
+                      margin="$3"
                       borderRadius="$3"
                     >
                       <Text color="white" fontWeight="600" fontSize={isMobile ? "$3" : "$2"}>
@@ -488,16 +937,34 @@ const ChatPage: React.FC = () => {
                   )}
                   <FlatList
                     ref={flatListRef}
-                    data={messages}
+                    data={currentMessages}
                     renderItem={renderMessage}
                     keyExtractor={(item) => item.id.toString()}
-                    contentContainerStyle={{ 
+                    contentContainerStyle={{
                       padding: isMobile ? 12 : 16,
-                      paddingBottom: 16 
+                      paddingBottom: 16
                     }}
                     onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
                   />
                 </YStack>
+
+                {/* Typing Indicator */}
+                {activeTypingUsers.size > 0 && (
+                  <XStack
+                    paddingHorizontal={isMobile ? "$3" : "$4"}
+                    paddingVertical="$1"
+                    backgroundColor="#36393f"
+                  >
+                    <Text color="#72767d" fontSize="$2" fontStyle="italic">
+                      {(() => {
+                        const names = Array.from(activeTypingUsers.values());
+                        if (names.length === 1) return `${names[0]} is typing...`;
+                        if (names.length === 2) return `${names[0]} and ${names[1]} are typing...`;
+                        return `${names[0]} and ${names.length - 1} others are typing...`;
+                      })()}
+                    </Text>
+                  </XStack>
+                )}
 
                 {/* Input Box */}
                 <XStack
@@ -511,9 +978,14 @@ const ChatPage: React.FC = () => {
                 >
                   <Input
                     flex={1}
-                    placeholder={`Message ${selectedServer.name}`}
+                    placeholder={isDmMode && activeConversation
+                      ? `Message ${getConversationDisplayName(activeConversation)}`
+                      : selectedServer
+                        ? `Message ${selectedServer.name}`
+                        : "Type a message..."
+                    }
                     value={input}
-                    onChangeText={setInput}
+                    onChangeText={handleInputChange}
                     multiline
                     numberOfLines={1}
                     maxLength={2000}
@@ -544,15 +1016,15 @@ const ChatPage: React.FC = () => {
               </KeyboardAvoidingView>
             </YStack>
           ) : (
-            <YStack 
-              flex={1} 
-              backgroundColor="#36393f" 
-              justifyContent="center" 
+            <YStack
+              flex={1}
+              backgroundColor="#36393f"
+              justifyContent="center"
               alignItems="center"
               padding="$4"
             >
               {!isDesktop && (
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => setShowServerSidebar(true)}
                   style={{ position: 'absolute', top: 20 + insets.top, left: 20 }}
                 >
@@ -560,15 +1032,15 @@ const ChatPage: React.FC = () => {
                 </TouchableOpacity>
               )}
               <Text color="#72767d" fontSize={isMobile ? "$5" : "$6"} fontWeight="600" textAlign="center">
-                {servers.length === 0 
-                  ? "Create or join a server to start chatting"
-                  : "Select a server to start chatting"}
+                {servers.length === 0 && conversations.length === 0
+                  ? "Add friends or create a server to start chatting"
+                  : "Select a conversation to start chatting"}
               </Text>
             </YStack>
           )}
 
-          {/* Right Sidebar - Desktop only */}
-          {isDesktop && selectedServer && showUserSidebar && (
+          {/* Right Sidebar - Desktop only, server mode only */}
+          {isDesktop && selectedServer && !isDmMode && showUserSidebar && (
             <RightSidebar
               selectedServer={selectedServer}
               token={token}
@@ -588,33 +1060,33 @@ const ChatPage: React.FC = () => {
           onRequestClose={() => setMenuVisible(false)}
         >
           <Pressable
-            style={{ 
-              flex: 1, 
-              backgroundColor: "rgba(0,0,0,0.5)", 
-              justifyContent: "center", 
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.5)",
+              justifyContent: "center",
               alignItems: "center",
               padding: 20
             }}
             onPress={() => setMenuVisible(false)}
           >
-            <Card 
-              backgroundColor="#2f3136" 
-              padding="$0" 
-              borderRadius="$4" 
+            <Card
+              backgroundColor="#2f3136"
+              padding="$0"
+              borderRadius="$4"
               width={isMobile ? "90%" : 200}
               maxWidth={300}
             >
               <YStack>
-                {messages.find((m) => m.id === menuMessageId)?.user_id === userId && (
+                {currentMessages.find((m) => m.id === menuMessageId)?.user_id === userId && (
                   <Pressable
                     onPress={() => {
-                      const msg = messages.find((m) => m.id === menuMessageId);
+                      const msg = currentMessages.find((m) => m.id === menuMessageId);
                       if (msg) handleEditClick(msg.id, msg.content);
                     }}
                   >
-                    <XStack 
-                      padding={isMobile ? "$4" : "$3"} 
-                      gap="$3" 
+                    <XStack
+                      padding={isMobile ? "$4" : "$3"}
+                      gap="$3"
                       alignItems="center"
                     >
                       <Edit3 size={isMobile ? 20 : 16} color="white" />
@@ -623,9 +1095,9 @@ const ChatPage: React.FC = () => {
                   </Pressable>
                 )}
                 <Pressable onPress={() => menuMessageId && handleDeleteClick(menuMessageId)}>
-                  <XStack 
-                    padding={isMobile ? "$4" : "$3"} 
-                    gap="$3" 
+                  <XStack
+                    padding={isMobile ? "$4" : "$3"}
+                    gap="$3"
                     alignItems="center"
                   >
                     <Trash2 size={isMobile ? 20 : 16} color="#f04747" />
@@ -637,8 +1109,8 @@ const ChatPage: React.FC = () => {
           </Pressable>
         </Modal>
 
-        {/* Settings Dialog */}
-        {isServerSettingsOpen && (
+        {/* Settings Dialog - Only in server mode */}
+        {isServerSettingsOpen && selectedServer && !isDmMode && (
           <SettingsDialog
             open={isServerSettingsOpen}
             onClose={() => setIsServerSettingsOpen(false)}

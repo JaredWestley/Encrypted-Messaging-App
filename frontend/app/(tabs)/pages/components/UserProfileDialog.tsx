@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { YStack, XStack, Text, Button, Avatar, Spinner, Separator } from "tamagui";
+import { YStack, XStack, Text, Button, Spinner, Separator } from "tamagui";
 import { Modal, TouchableOpacity, Image } from "react-native";
 import { X } from "@tamagui/lucide-icons";
 import { fetchUsersInServer } from "../../utils/api";
@@ -129,13 +129,18 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
                       style={{ width: 80, height: 80, borderRadius: 40 }}
                     />
                   ) : (
-                    <Avatar circular size="$10" backgroundColor="#5865F2">
-                      <Avatar.Fallback backgroundColor="#5865F2">
-                        <Text color="white" fontSize="$9" fontWeight="700">
-                          {getFirstLetter(displayUser.username)}
-                        </Text>
-                      </Avatar.Fallback>
-                    </Avatar>
+                    <YStack
+                      width={80}
+                      height={80}
+                      borderRadius={40}
+                      backgroundColor="#5865F2"
+                      justifyContent="center"
+                      alignItems="center"
+                    >
+                      <Text color="white" fontSize="$9" fontWeight="700">
+                        {getFirstLetter(displayUser.username)}
+                      </Text>
+                    </YStack>
                   )}
                   <YStack flex={1}>
                     <Text fontSize="$7" fontWeight="700" color="white">
