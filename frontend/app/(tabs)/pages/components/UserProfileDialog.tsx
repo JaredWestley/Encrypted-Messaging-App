@@ -3,6 +3,7 @@ import { YStack, XStack, Text, Button, Spinner, Separator } from "tamagui";
 import { Modal, TouchableOpacity, Image } from "react-native";
 import { X } from "@tamagui/lucide-icons";
 import { fetchUsersInServer } from "../../utils/api";
+import { BASE_URL } from "../../utils/config";
 
 interface User {
   id: number;
@@ -125,7 +126,7 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
                 <XStack alignItems="center" marginTop="$2">
                   {displayUser.icon_url ? (
                     <Image
-                      source={{ uri: `http://localhost:8000${displayUser.icon_url}` }}
+                      source={{ uri: `${BASE_URL}${displayUser.icon_url}` }}
                       style={{ width: 80, height: 80, borderRadius: 40 }}
                     />
                   ) : (

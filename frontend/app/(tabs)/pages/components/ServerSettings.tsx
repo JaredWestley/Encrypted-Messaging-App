@@ -3,6 +3,7 @@ import { YStack, XStack, Text, Input, Button, Separator } from "tamagui";
 import { Alert as RNAlert, Image, Platform } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { renameServer, deleteServer, uploadServerIcon } from "../../utils/api";
+import { BASE_URL } from "../../utils/config";
 
 interface ServerSettingsProps {
   serverId: number;
@@ -13,6 +14,7 @@ interface ServerSettingsProps {
   isOwner: boolean;
   onServerDeleted: () => void;
   onServerRenamed: (newName: string) => void;
+  onServerIconUpdated: (newIconUrl: string) => void;
 }
 
 const ServerSettings: React.FC<ServerSettingsProps> = ({
@@ -24,6 +26,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
   isOwner,
   onServerDeleted,
   onServerRenamed,
+  onServerIconUpdated,
 }) => {
   const [newName, setNewName] = useState(currentName);
   const [loading, setLoading] = useState(false);
@@ -55,32 +58,44 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
 
   const handleDelete = async () => {
     if (!isOwner) {
-      RNAlert.alert("Error", "Only the server owner can delete the server");
+      if (Platform.OS === "web") {
+        window.alert("Only the server owner can delete the server");
+      } else {
+        RNAlert.alert("Error", "Only the server owner can delete the server");
+      }
       return;
     }
 
-    RNAlert.alert(
-      "Delete Server",
-      "Are you sure you want to delete this server? This action is irreversible.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              setLoading(true);
-              await deleteServer(token, serverId, logout);
-              onServerDeleted();
-            } catch (err: any) {
-              RNAlert.alert("Error", err.message || "Failed to delete server.");
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]
-    );
+    const doDelete = async () => {
+      try {
+        setLoading(true);
+        await deleteServer(token, serverId, logout);
+        onServerDeleted();
+      } catch (err: any) {
+        if (Platform.OS === "web") {
+          window.alert(err.message || "Failed to delete server.");
+        } else {
+          RNAlert.alert("Error", err.message || "Failed to delete server.");
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (Platform.OS === "web") {
+      if (window.confirm("Are you sure you want to delete this server? This action is irreversible.")) {
+        await doDelete();
+      }
+    } else {
+      RNAlert.alert(
+        "Delete Server",
+        "Are you sure you want to delete this server? This action is irreversible.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Delete", style: "destructive", onPress: doDelete },
+        ]
+      );
+    }
   };
 
   const pickImage = async () => {
@@ -127,8 +142,10 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
     try {
       setLoading(true);
       const res = await uploadServerIcon(formData, serverId, token, logout);
-      setServerIconUrl("http://localhost:8000" + res.icon_url);
+      // Cache-bust so browser loads new image
+      setServerIconUrl(BASE_URL + res.icon_url + "?t=" + Date.now());
       setPreviewUri(null);
+      onServerIconUpdated(res.icon_url);
       showToast("Server icon uploaded successfully.");
     } catch (error: any) {
       RNAlert.alert("Error", "Upload failed: " + error.message);
@@ -193,7 +210,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
           />
         ) : currentIcon ? (
           <Image
-            source={{ uri: `http://localhost:8000${currentIcon}` }}
+            source={{ uri: `${BASE_URL}${currentIcon}` }}
             style={{ width: 80, height: 80, borderRadius: 40, marginBottom: 8 }}
           />
         ) : (

@@ -1,3 +1,7 @@
+// Polyfill crypto.getRandomValues for React Native (required by TweetNaCl)
+// MUST be imported before anything that uses TweetNaCl
+import 'react-native-get-random-values';
+
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';

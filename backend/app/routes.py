@@ -8,11 +8,12 @@ from app.schemas import (
     UserRead, PublicUserRead, RoleRead, RoleCreate, ServerInviteRead, ServerInviteCreate,
     ServerRead, ServerUpdate, UserUpdate,
     FriendshipRead, FriendRequestCreate, ConversationRead, DirectMessageCreate, DirectMessageRead,
+    PublicKeyUpload, PublicKeyRead, ServerKeyUpload, ServerKeyRead,
 )
 from app.models import (
     User, Server, Message, ServerMembership, ServerInvite, ServerMembershipRole,
     Role, ServerBan, RolePermission, TokenBlacklist,
-    Friendship, Conversation, ConversationMember, DirectMessage,
+    Friendship, Conversation, ConversationMember, DirectMessage, ServerKey,
 )
 from app.database import get_session, engine
 from app.auth import (
@@ -86,6 +87,13 @@ def require_server_owner(user: User, server_id: int, session: Session):
         raise HTTPException(403, "Only server owner can perform this action")
     return server
 
+def require_permission(user: User, server_id: int, permission: str, session: Session):
+    """Check if user is owner or has the specified permission. Raises 403 if not."""
+    if is_server_owner(user, server_id, session):
+        return
+    if not has_permission(user, server_id, permission, session):
+        raise HTTPException(403, f"You don't have the {permission} permission")
+
 def is_banned_from_server(user_id: int, server_id: int, session: Session) -> bool:
     ban = session.exec(
         select(ServerBan).where(
@@ -104,7 +112,7 @@ async def send_message(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    # 🔒 Check if the user is a member of the server
+    # Check if the user is a member of the server
     membership = session.exec(
         select(ServerMembership).where(
             ServerMembership.server_id == message.server_id,
@@ -118,18 +126,26 @@ async def send_message(
     if not membership:
         raise HTTPException(status_code=403, detail="You are not a member of this server")
 
-    # ✅ Proceed to create the message
+    # Check SEND_MESSAGES permission
+    if not (is_server_owner(current_user, message.server_id, session) or
+            has_permission(current_user, message.server_id, "SEND_MESSAGES", session)):
+        raise HTTPException(status_code=403, detail="You don't have permission to send messages")
+
+    # Proceed to create the message
     db_message = Message(
         content=message.content,
         user_id=current_user.id,  # use authenticated user
         server_id=message.server_id,
+        is_encrypted=message.is_encrypted,
+        nonce=message.nonce,
+        sender_public_key=message.sender_public_key,
         created_at=message.created_at or datetime.utcnow()
     )
     session.add(db_message)
     session.commit()
     session.refresh(db_message)
 
-    # Broadcast new message to all WebSocket clients in this server
+    # Broadcast new message to all WebSocket clients in this server (except sender)
     await manager.broadcast_to_server(message.server_id, {
         "type": "new_message",
         "message": {
@@ -139,8 +155,26 @@ async def send_message(
             "username": current_user.username,
             "server_id": db_message.server_id,
             "timestamp": db_message.created_at.isoformat(),
+            "is_encrypted": db_message.is_encrypted,
+            "nonce": db_message.nonce,
+            "sender_public_key": db_message.sender_public_key,
         }
-    })
+    }, exclude_user_id=current_user.id)
+
+    # Send notification to all server members who are NOT connected to this server's WS
+    # This allows the frontend to show unread badges on server icons
+    connected_user_ids = manager.get_connected_user_ids(message.server_id)
+    all_members = session.exec(
+        select(ServerMembership).where(ServerMembership.server_id == message.server_id)
+    ).all()
+    for member in all_members:
+        if member.user_id != current_user.id and member.user_id not in connected_user_ids:
+            await manager.send_to_user(member.user_id, {
+                "type": "server_new_message_notification",
+                "server_id": message.server_id,
+                "message_id": db_message.id,
+                "username": current_user.username,
+            })
 
     return {"detail": "Message sent", "message_id": db_message.id}
 
@@ -170,12 +204,12 @@ async def edit_message(
     session.commit()
     session.refresh(db_message)
 
-    # Broadcast edit to all WebSocket clients in this server
+    # Broadcast edit to all WebSocket clients in this server (except sender)
     await manager.broadcast_to_server(db_message.server_id, {
         "type": "message_edited",
         "message_id": db_message.id,
         "content": db_message.content,
-    })
+    }, exclude_user_id=current_user.id)
 
     return {"detail": "Message edited"}
 
@@ -204,11 +238,11 @@ async def delete_message(
     session.delete(db_message)
     session.commit()
 
-    # Broadcast deletion to all WebSocket clients in this server
+    # Broadcast deletion to all WebSocket clients in this server (except sender)
     await manager.broadcast_to_server(msg_server_id, {
         "type": "message_deleted",
         "message_id": msg_id,
-    })
+    }, exclude_user_id=current_user.id)
 
     return {"detail": "Message deleted"}
 
@@ -219,7 +253,7 @@ async def load_messages(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    # 🔒 Check if user is a member of the server
+    # Check if user is a member of the server
     membership = session.exec(
         select(ServerMembership).where(
             ServerMembership.server_id == server_id,
@@ -233,7 +267,12 @@ async def load_messages(
     if is_banned_from_server(current_user.id, server_id, session):
         raise HTTPException(status_code=403, detail="You are banned from this server")
 
-    # ✅ User is authorized to view messages
+    # Check VIEW_CHANNEL permission
+    if not (is_server_owner(current_user, server_id, session) or
+            has_permission(current_user, server_id, "VIEW_CHANNEL", session)):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this channel")
+
+    # User is authorized to view messages
     messages = session.exec(
         select(Message, User)
         .join(User, User.id == Message.user_id)
@@ -248,6 +287,9 @@ async def load_messages(
             "username": user.username,
             "server_id": msg.server_id,
             "timestamp": msg.created_at.isoformat(),
+            "is_encrypted": msg.is_encrypted,
+            "nonce": msg.nonce,
+            "sender_public_key": msg.sender_public_key,
         }
         for msg, user in messages
     ]
@@ -297,6 +339,9 @@ def create_role(
     session: Session = Depends(get_session)
 ):
 
+    if is_banned_from_server(current_user.id, server_id, session):
+        raise HTTPException(status_code=403, detail="You are banned from this server")
+
     membership = session.exec(
         select(ServerMembership)
         .where(
@@ -304,19 +349,15 @@ def create_role(
             (ServerMembership.server_id == server_id)
         )
     ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="You must be a member of this server")
 
-    require_server_owner(current_user, server_id, session)
-    
+    require_permission(current_user, server_id, "MANAGE_ROLES", session)
+
     db_role = Role(server_id=server_id, name=role.name)
     session.add(db_role)
     session.commit()
     session.refresh(db_role)
-
-    if is_banned_from_server(current_user.id, server_id, session):
-        raise HTTPException(status_code=403, detail="You are banned from this server")
-    
-    if not membership:
-        raise HTTPException(status_code=403, detail="You must be a member of this server to view roles")
 
     # Add permissions
     for perm in role.permissions:
@@ -335,7 +376,10 @@ def update_role(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    require_server_owner(current_user, server_id, session)
+    if is_banned_from_server(current_user.id, server_id, session):
+        raise HTTPException(status_code=403, detail="You are banned from this server")
+
+    require_permission(current_user, server_id, "MANAGE_ROLES", session)
 
     role = session.exec(
         select(Role).where(Role.id == role_id, Role.server_id == server_id)
@@ -343,9 +387,6 @@ def update_role(
 
     if not role:
         raise HTTPException(404, "Role not found")
-
-    if is_banned_from_server(current_user.id, server_id, session):
-        raise HTTPException(status_code=403, detail="You are banned from this server")
 
     role.name = updated_data.name
     session.commit()
@@ -385,7 +426,7 @@ def get_roles(
         select(Role)
         .where(Role.server_id == server_id)
         .options(joinedload(Role.memberships).joinedload(ServerMembershipRole.membership).joinedload(ServerMembership.user))
-    ).unique().all()  # <- FIX HERE
+    ).unique().all()
 
     roles_with_users = []
     for role in roles:
@@ -409,7 +450,10 @@ def assign_role_to_user(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    require_server_owner(current_user, server_id, session)
+    if is_banned_from_server(current_user.id, server_id, session):
+        raise HTTPException(status_code=403, detail="You are banned from this server")
+
+    require_permission(current_user, server_id, "MANAGE_ROLES", session)
 
     # Validate role belongs to server
     role = session.exec(select(Role).where(Role.id == role_assign.role_id, Role.server_id == server_id)).first()
@@ -426,9 +470,6 @@ def assign_role_to_user(
     ).first()
     if not membership:
         raise HTTPException(404, "User is not a member of this server")
-
-    if is_banned_from_server(current_user.id, server_id, session):
-        raise HTTPException(status_code=403, detail="You are banned from this server")
 
     # Assign role
     existing = session.exec(
@@ -453,7 +494,10 @@ def unassign_role_from_user(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    require_server_owner(current_user, server_id, session)
+    if is_banned_from_server(current_user.id, server_id, session):
+        raise HTTPException(status_code=403, detail="You are banned from this server")
+
+    require_permission(current_user, server_id, "MANAGE_ROLES", session)
 
     smr = session.exec(
         select(ServerMembershipRole).where(
@@ -466,9 +510,6 @@ def unassign_role_from_user(
     if not smr:
         raise HTTPException(404, "Role assignment not found")
 
-    if is_banned_from_server(current_user.id, server_id, session):
-        raise HTTPException(status_code=403, detail="You are banned from this server")
-
     session.delete(smr)
     session.commit()
     return {"detail": "Role unassigned"}
@@ -480,14 +521,18 @@ def delete_role(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    require_server_owner(current_user, server_id, session)
+    if is_banned_from_server(current_user.id, server_id, session):
+        raise HTTPException(status_code=403, detail="You are banned from this server")
+
+    require_permission(current_user, server_id, "MANAGE_ROLES", session)
 
     role = session.exec(select(Role).where(Role.id == role_id, Role.server_id == server_id)).first()
     if not role:
         raise HTTPException(404, "Role not found")
 
-    if is_banned_from_server(current_user.id, server_id, session):
-        raise HTTPException(status_code=403, detail="You are banned from this server")
+    # Prevent deletion of the default role
+    if role.is_default:
+        raise HTTPException(403, "Cannot delete the default role")
 
     # Delete role permissions
     perms = session.exec(select(RolePermission).where(RolePermission.role_id == role_id)).all()
@@ -566,6 +611,25 @@ def create_server(
     session.add(membership)
     session.commit()
 
+    # Create a default role with basic permissions
+    default_role = Role(server_id=db_server.id, name="Default", is_default=True)
+    session.add(default_role)
+    session.commit()
+    session.refresh(default_role)
+
+    # Add VIEW_CHANNEL and SEND_MESSAGES permissions to the default role
+    for perm in ["VIEW_CHANNEL", "SEND_MESSAGES"]:
+        session.add(RolePermission(role_id=default_role.id, permission=perm))
+    session.commit()
+
+    # Assign default role to the creator
+    session.add(ServerMembershipRole(
+        user_id=current_user.id,
+        server_id=db_server.id,
+        role_id=default_role.id,
+    ))
+    session.commit()
+
     return db_server
 
 @router.put("/servers/{server_id}")
@@ -575,7 +639,11 @@ async def rename_server(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    server = require_server_owner(current_user, server_id, session)
+    require_permission(current_user, server_id, "MANAGE_SERVER", session)
+
+    server = session.get(Server, server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
 
     if not data.name.strip():
         raise HTTPException(400, "Server name cannot be empty")
@@ -584,6 +652,15 @@ async def rename_server(
     session.add(server)
     session.commit()
     session.refresh(server)
+
+    # Broadcast server update to all members
+    await manager.broadcast_to_server(server_id, {
+        "type": "server_updated",
+        "server_id": server_id,
+        "name": server.name,
+        "icon_url": server.icon_url,
+    })
+
     return {"detail": "Server renamed successfully", "name": server.name}
 
 
@@ -595,9 +672,28 @@ async def delete_server(
 ):
     server = require_server_owner(current_user, server_id, session)
 
+    # Delete records from tables that don't cascade from Server
+    for sk in session.exec(select(ServerKey).where(ServerKey.server_id == server_id)).all():
+        session.delete(sk)
+    for ban in session.exec(select(ServerBan).where(ServerBan.server_id == server_id)).all():
+        session.delete(ban)
+    for invite in session.exec(select(ServerInvite).where(ServerInvite.server_id == server_id)).all():
+        session.delete(invite)
+
+    # Delete role-membership assignments for this server
+    for smr in session.exec(select(ServerMembershipRole).where(ServerMembershipRole.server_id == server_id)).all():
+        session.delete(smr)
+
+    # Delete role permissions for roles in this server
+    roles = session.exec(select(Role).where(Role.server_id == server_id)).all()
+    for role in roles:
+        for perm in session.exec(select(RolePermission).where(RolePermission.role_id == role.id)).all():
+            session.delete(perm)
+
+    # Now delete the server (cascades to messages, memberships, roles)
     session.delete(server)
     session.commit()
-    return server
+    return {"detail": "Server deleted successfully"}
 
 @router.get("/servers")
 def list_servers(
@@ -657,12 +753,12 @@ def get_users_in_server(
     if is_banned_from_server(current_user.id, server_id, session):
         raise HTTPException(status_code=403, detail="You are banned from this server")
 
-    # ✅ Get list of banned user IDs
+    # Get list of banned user IDs
     banned_user_ids = session.exec(
         select(ServerBan.user_id).where(ServerBan.server_id == server_id)
     ).all()
 
-    # ✅ Get memberships of non-banned users
+    # Get memberships of non-banned users
     memberships = session.exec(
         select(ServerMembership).where(ServerMembership.server_id == server_id)
     ).all()
@@ -780,6 +876,31 @@ async def join_server_with_invite(
         session.add(new_membership)
         session.commit()
 
+        # Auto-assign the default role to the new member
+        default_role = session.exec(
+            select(Role).where(
+                Role.server_id == invite.server_id,
+                Role.is_default == True
+            )
+        ).first()
+        if default_role:
+            session.add(ServerMembershipRole(
+                user_id=current_user.id,
+                server_id=invite.server_id,
+                role_id=default_role.id,
+            ))
+            session.commit()
+
+        # Notify the server owner to redistribute encryption keys for the new member
+        server = session.get(Server, invite.server_id)
+        if server:
+            await manager.send_to_user(server.owner_id, {
+                "type": "key_redistribution_needed",
+                "server_id": invite.server_id,
+                "user_id": current_user.id,
+                "username": current_user.username,
+            })
+
     # Redirect to frontend chat page
     return {
         "detail": "Successfully joined the server.",
@@ -807,7 +928,7 @@ async def kick_from_server(
 
     # Permission check: must be server owner or have 'kick' permission
     if not (is_server_owner(current_user, server_id, session) or
-            has_permission(current_user, server_id, "kick", session)):
+            has_permission(current_user, server_id, "KICK_MEMBERS", session)):
         raise HTTPException(status_code=403, detail="You do not have permission to kick users")
 
     if is_banned_from_server(current_user.id, server_id, session):
@@ -849,7 +970,7 @@ async def ban_from_server(
 
     # Permission check
     if not (is_server_owner(current_user, server_id, session) or
-            has_permission(current_user, server_id, "ban", session)):
+            has_permission(current_user, server_id, "BAN_MEMBERS", session)):
         raise HTTPException(status_code=403, detail="You do not have permission to ban users")
 
     if is_banned_from_server(current_user.id, server_id, session):
@@ -881,7 +1002,7 @@ async def unban_user(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    if not (is_server_owner(current_user, server_id, session) or has_permission(current_user, server_id, "ban", session)):
+    if not (is_server_owner(current_user, server_id, session) or has_permission(current_user, server_id, "BAN_MEMBERS", session)):
         raise HTTPException(status_code=403, detail="You do not have permission to unban users")
 
     if is_banned_from_server(current_user.id, server_id, session):
@@ -907,7 +1028,7 @@ async def get_banned_users(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    if not (is_server_owner(current_user, server_id, session) or has_permission(current_user, server_id, "ban", session)):
+    if not (is_server_owner(current_user, server_id, session) or has_permission(current_user, server_id, "BAN_MEMBERS", session)):
         raise HTTPException(status_code=403, detail="You do not have permission to view banned users")
 
     if is_banned_from_server(current_user.id, server_id, session):
@@ -1340,6 +1461,9 @@ async def get_conversation_messages(
             user_id=msg.user_id,
             username=user.username if user else "Unknown",
             content=msg.content,
+            is_encrypted=msg.is_encrypted,
+            nonce=msg.nonce,
+            sender_public_key=msg.sender_public_key,
             created_at=msg.created_at,
         ))
     return result
@@ -1367,6 +1491,9 @@ async def send_dm(
         conversation_id=conversation_id,
         user_id=current_user.id,
         content=body.content,
+        is_encrypted=body.is_encrypted,
+        nonce=body.nonce,
+        sender_public_key=body.sender_public_key,
     )
     session.add(dm)
     session.commit()
@@ -1378,6 +1505,9 @@ async def send_dm(
         user_id=dm.user_id,
         username=current_user.username,
         content=dm.content,
+        is_encrypted=dm.is_encrypted,
+        nonce=dm.nonce,
+        sender_public_key=dm.sender_public_key,
         created_at=dm.created_at,
     )
 
@@ -1398,6 +1528,9 @@ async def send_dm(
                     "user_id": dm.user_id,
                     "username": current_user.username,
                     "content": dm.content,
+                    "is_encrypted": dm.is_encrypted,
+                    "nonce": dm.nonce,
+                    "sender_public_key": dm.sender_public_key,
                     "created_at": dm.created_at.isoformat(),
                 },
             })
@@ -1509,9 +1642,187 @@ async def sync_dm_messages(
             "user_id": msg.user_id,
             "username": user.username if user else "Unknown",
             "content": msg.content,
+            "is_encrypted": msg.is_encrypted,
+            "nonce": msg.nonce,
+            "sender_public_key": msg.sender_public_key,
             "created_at": msg.created_at.isoformat(),
         })
     return result
+
+# ─── Encryption Key Management ──────────────────────────────────────
+
+@router.post("/keys/public")
+async def upload_public_key(
+    body: PublicKeyUpload,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Upload or update the current user's public key."""
+    current_user.public_key = body.public_key
+    session.add(current_user)
+    session.commit()
+    return {"detail": "Public key uploaded"}
+
+
+@router.get("/keys/public/{user_id}", response_model=PublicKeyRead)
+async def get_public_key(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Get a user's public key."""
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return PublicKeyRead(
+        user_id=user.id,
+        username=user.username,
+        public_key=user.public_key,
+    )
+
+
+@router.get("/keys/public", response_model=List[PublicKeyRead])
+async def get_my_public_key(
+    current_user: User = Depends(get_current_user),
+):
+    """Get the current user's public key."""
+    return [PublicKeyRead(
+        user_id=current_user.id,
+        username=current_user.username,
+        public_key=current_user.public_key,
+    )]
+
+
+@router.get("/keys/server/{server_id}", response_model=ServerKeyRead)
+async def get_server_key(
+    server_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Get the encrypted server key for the current user."""
+    membership = session.exec(
+        select(ServerMembership).where(
+            ServerMembership.server_id == server_id,
+            ServerMembership.user_id == current_user.id
+        )
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this server")
+
+    key = session.exec(
+        select(ServerKey).where(
+            ServerKey.server_id == server_id,
+            ServerKey.user_id == current_user.id
+        )
+    ).first()
+    if not key:
+        raise HTTPException(status_code=404, detail="Server key not found. The server owner needs to distribute encryption keys.")
+    # Determine who encrypted this key (fallback to server owner for legacy keys)
+    encrypting_user_id = key.encrypted_by
+    if encrypting_user_id is None:
+        server = session.get(Server, server_id)
+        encrypting_user_id = server.owner_id if server else None
+    return ServerKeyRead(
+        server_id=key.server_id,
+        encrypted_key=key.encrypted_key,
+        nonce=key.nonce,
+        encrypted_by=encrypting_user_id,
+    )
+
+
+@router.post("/keys/server")
+async def upload_server_keys(
+    body: ServerKeyUpload,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Upload encrypted server keys for members. Any member who has the key can redistribute."""
+    server = session.get(Server, body.server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    # Verify the uploader is a member of the server
+    membership = session.exec(
+        select(ServerMembership).where(
+            ServerMembership.server_id == body.server_id,
+            ServerMembership.user_id == current_user.id
+        )
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this server")
+
+    for entry in body.encrypted_keys:
+        user_id = entry["user_id"]
+        encrypted_key = entry["encrypted_key"]
+        nonce = entry["nonce"]
+
+        # Upsert: replace existing key for this user+server
+        existing = session.exec(
+            select(ServerKey).where(
+                ServerKey.server_id == body.server_id,
+                ServerKey.user_id == user_id
+            )
+        ).first()
+        if existing:
+            existing.encrypted_key = encrypted_key
+            existing.nonce = nonce
+            existing.encrypted_by = current_user.id
+            session.add(existing)
+        else:
+            session.add(ServerKey(
+                server_id=body.server_id,
+                user_id=user_id,
+                encrypted_key=encrypted_key,
+                nonce=nonce,
+                encrypted_by=current_user.id,
+            ))
+
+    session.commit()
+
+    # Notify members via WebSocket that keys are available
+    await manager.broadcast_to_server(body.server_id, {
+        "type": "keys_updated",
+        "server_id": body.server_id,
+    })
+
+    return {"detail": f"Server keys uploaded for {len(body.encrypted_keys)} members"}
+
+
+@router.get("/keys/server/{server_id}/members", response_model=List[PublicKeyRead])
+async def get_server_member_public_keys(
+    server_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Get public keys for all members of a server. Used by the owner to distribute server keys."""
+    server = session.get(Server, server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    membership = session.exec(
+        select(ServerMembership).where(
+            ServerMembership.server_id == server_id,
+            ServerMembership.user_id == current_user.id
+        )
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this server")
+
+    members = session.exec(
+        select(ServerMembership).where(ServerMembership.server_id == server_id)
+    ).all()
+
+    result = []
+    for m in members:
+        user = session.get(User, m.user_id)
+        if user:
+            result.append(PublicKeyRead(
+                user_id=user.id,
+                username=user.username,
+                public_key=user.public_key,
+            ))
+    return result
+
 
 @router.post("/auth/register", status_code=201)
 def register(user: UserCreate, session: Session = Depends(get_session)):
@@ -1750,6 +2061,25 @@ async def upload_user_icon(
     session.commit()
     session.refresh(current_user)
 
+    # Broadcast user profile update to all servers the user is in
+    memberships = session.exec(
+        select(ServerMembership).where(ServerMembership.user_id == current_user.id)
+    ).all()
+    for m in memberships:
+        await manager.broadcast_to_server(m.server_id, {
+            "type": "user_updated",
+            "user_id": current_user.id,
+            "username": current_user.username,
+            "icon_url": current_user.icon_url,
+        })
+    # Also broadcast via DM WebSocket
+    await manager.send_to_user(current_user.id, {
+        "type": "user_updated",
+        "user_id": current_user.id,
+        "username": current_user.username,
+        "icon_url": current_user.icon_url,
+    })
+
     return {
         "detail": "Icon uploaded successfully",
         "icon_url": public_path
@@ -1762,10 +2092,11 @@ async def upload_server_icon(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    server = session.get(Server, server_id)
+    require_permission(current_user, server_id, "MANAGE_SERVER", session)
 
-    if not server or server.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not allowed to update this server's icon.")
+    server = session.get(Server, server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
 
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Invalid file type.")
@@ -1793,6 +2124,14 @@ async def upload_server_icon(
     session.add(server)
     session.commit()
     session.refresh(server)
+
+    # Broadcast server update to all members
+    await manager.broadcast_to_server(server_id, {
+        "type": "server_updated",
+        "server_id": server_id,
+        "name": server.name,
+        "icon_url": server.icon_url,
+    })
 
     return {
         "detail": "Server icon uploaded successfully",
@@ -1824,6 +2163,11 @@ async def sync_messages(
     if is_banned_from_server(current_user.id, server_id, session):
         raise HTTPException(status_code=403, detail="You are banned from this server")
 
+    # Check VIEW_CHANNEL permission
+    if not (is_server_owner(current_user, server_id, session) or
+            has_permission(current_user, server_id, "VIEW_CHANNEL", session)):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this channel")
+
     messages = session.exec(
         select(Message, User)
         .join(User, User.id == Message.user_id)
@@ -1839,6 +2183,9 @@ async def sync_messages(
             "username": user.username,
             "server_id": msg.server_id,
             "timestamp": msg.created_at.isoformat(),
+            "is_encrypted": msg.is_encrypted,
+            "nonce": msg.nonce,
+            "sender_public_key": msg.sender_public_key,
         }
         for msg, user in messages
     ]
@@ -1860,6 +2207,111 @@ def authenticate_ws_token(token: str, session: Session):
     except (JWTError, ValueError, TypeError):
         return None
     return session.get(User, user_id)
+
+
+# NOTE: /ws/dm MUST be defined BEFORE /ws/{server_id} so FastAPI doesn't
+# try to parse "dm" as an integer server_id.
+@router.websocket("/ws/dm")
+async def dm_websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for DM notifications and typing indicators.
+    Not tied to a specific server - receives all DM-related events.
+
+    Client sends:
+      - {"type": "auth", "token": "<jwt>"}  (must be first message)
+      - {"type": "dm_typing", "conversation_id": <int>}
+      - {"type": "dm_stop_typing", "conversation_id": <int>}
+
+    Server sends:
+      - {"type": "dm_new_message", "conversation_id": <int>, "message": {...}}
+      - {"type": "dm_message_edited", "conversation_id": <int>, ...}
+      - {"type": "dm_message_deleted", "conversation_id": <int>, ...}
+      - {"type": "dm_typing", "conversation_id": <int>, "user_id": <int>, "username": "<str>"}
+      - {"type": "dm_stop_typing", "conversation_id": <int>, "user_id": <int>}
+      - {"type": "friend_request", "from_user": {...}}
+      - {"type": "friend_accepted", "friend": {...}}
+    """
+    await websocket.accept()
+
+    # Wait for authentication message
+    try:
+        auth_data = await websocket.receive_json()
+    except Exception:
+        await websocket.close(code=4001, reason="Expected auth message")
+        return
+
+    if auth_data.get("type") != "auth" or not auth_data.get("token"):
+        try:
+            await websocket.send_json({"type": "auth_error", "message": "First message must be auth"})
+            await websocket.close(code=4001, reason="First message must be auth")
+        except Exception:
+            pass
+        return
+
+    # Validate token
+    with Session(engine) as session:
+        user = authenticate_ws_token(auth_data["token"], session)
+        if not user:
+            try:
+                await websocket.send_json({"type": "auth_error", "message": "Invalid token"})
+                await websocket.close(code=4003, reason="Invalid token")
+            except Exception:
+                pass
+            return
+        user_id = user.id
+        username = user.username
+
+    # Send auth success before registering connection
+    await websocket.send_json({"type": "auth_success"})
+
+    # Register DM connection
+    await manager.connect_dm(websocket, user_id)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type")
+
+            if msg_type == "dm_typing":
+                conversation_id = data.get("conversation_id")
+                if conversation_id is not None:
+                    # Get conversation members and notify them
+                    with Session(engine) as session:
+                        members = session.exec(
+                            select(ConversationMember).where(
+                                ConversationMember.conversation_id == conversation_id
+                            )
+                        ).all()
+                        for m in members:
+                            if m.user_id != user_id:
+                                await manager.send_to_user(m.user_id, {
+                                    "type": "dm_typing",
+                                    "conversation_id": conversation_id,
+                                    "user_id": user_id,
+                                    "username": username,
+                                })
+
+            elif msg_type == "dm_stop_typing":
+                conversation_id = data.get("conversation_id")
+                if conversation_id is not None:
+                    with Session(engine) as session:
+                        members = session.exec(
+                            select(ConversationMember).where(
+                                ConversationMember.conversation_id == conversation_id
+                            )
+                        ).all()
+                        for m in members:
+                            if m.user_id != user_id:
+                                await manager.send_to_user(m.user_id, {
+                                    "type": "dm_stop_typing",
+                                    "conversation_id": conversation_id,
+                                    "user_id": user_id,
+                                })
+
+    except WebSocketDisconnect:
+        manager.disconnect_dm(websocket, user_id)
+    except Exception:
+        manager.disconnect_dm(websocket, user_id)
 
 
 @router.websocket("/ws/{server_id}")
@@ -1947,12 +2399,23 @@ async def websocket_endpoint(websocket: WebSocket, server_id: int):
                     "type": "typing",
                     "user_id": user_id,
                     "username": username,
+                    "server_id": server_id,
                 }, exclude_user_id=user_id)
 
             elif msg_type == "stop_typing":
                 await manager.broadcast_to_server(server_id, {
                     "type": "stop_typing",
                     "user_id": user_id,
+                    "server_id": server_id,
+                }, exclude_user_id=user_id)
+
+            elif msg_type == "key_needed":
+                # A member needs the server encryption key - broadcast to all other members
+                await manager.broadcast_to_server(server_id, {
+                    "type": "key_needed",
+                    "server_id": server_id,
+                    "user_id": user_id,
+                    "username": username,
                 }, exclude_user_id=user_id)
 
             elif msg_type == "ack":
@@ -1973,101 +2436,3 @@ async def websocket_endpoint(websocket: WebSocket, server_id: int):
         })
     except Exception:
         manager.disconnect(websocket, server_id, user_id)
-
-
-@router.websocket("/ws/dm")
-async def dm_websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket endpoint for DM notifications and typing indicators.
-    Not tied to a specific server - receives all DM-related events.
-
-    Client sends:
-      - {"type": "auth", "token": "<jwt>"}  (must be first message)
-      - {"type": "dm_typing", "conversation_id": <int>}
-      - {"type": "dm_stop_typing", "conversation_id": <int>}
-
-    Server sends:
-      - {"type": "dm_new_message", "conversation_id": <int>, "message": {...}}
-      - {"type": "dm_message_edited", "conversation_id": <int>, ...}
-      - {"type": "dm_message_deleted", "conversation_id": <int>, ...}
-      - {"type": "dm_typing", "conversation_id": <int>, "user_id": <int>, "username": "<str>"}
-      - {"type": "dm_stop_typing", "conversation_id": <int>, "user_id": <int>}
-      - {"type": "friend_request", "from_user": {...}}
-      - {"type": "friend_accepted", "friend": {...}}
-    """
-    await websocket.accept()
-
-    # Wait for authentication message
-    try:
-        auth_data = await websocket.receive_json()
-    except Exception:
-        await websocket.close(code=4001, reason="Expected auth message")
-        return
-
-    if auth_data.get("type") != "auth" or not auth_data.get("token"):
-        try:
-            await websocket.close(code=4001, reason="First message must be auth")
-        except Exception:
-            pass
-        return
-
-    # Validate token
-    with Session(engine) as session:
-        user = authenticate_ws_token(auth_data["token"], session)
-        if not user:
-            try:
-                await websocket.close(code=4003, reason="Invalid token")
-            except Exception:
-                pass
-            return
-        user_id = user.id
-        username = user.username
-
-    # Register DM connection
-    await manager.connect_dm(websocket, user_id)
-
-    try:
-        while True:
-            data = await websocket.receive_json()
-            msg_type = data.get("type")
-
-            if msg_type == "dm_typing":
-                conversation_id = data.get("conversation_id")
-                if conversation_id is not None:
-                    # Get conversation members and notify them
-                    with Session(engine) as session:
-                        members = session.exec(
-                            select(ConversationMember).where(
-                                ConversationMember.conversation_id == conversation_id
-                            )
-                        ).all()
-                        for m in members:
-                            if m.user_id != user_id:
-                                await manager.send_to_user(m.user_id, {
-                                    "type": "dm_typing",
-                                    "conversation_id": conversation_id,
-                                    "user_id": user_id,
-                                    "username": username,
-                                })
-
-            elif msg_type == "dm_stop_typing":
-                conversation_id = data.get("conversation_id")
-                if conversation_id is not None:
-                    with Session(engine) as session:
-                        members = session.exec(
-                            select(ConversationMember).where(
-                                ConversationMember.conversation_id == conversation_id
-                            )
-                        ).all()
-                        for m in members:
-                            if m.user_id != user_id:
-                                await manager.send_to_user(m.user_id, {
-                                    "type": "dm_stop_typing",
-                                    "conversation_id": conversation_id,
-                                    "user_id": user_id,
-                                })
-
-    except WebSocketDisconnect:
-        manager.disconnect_dm(websocket, user_id)
-    except Exception:
-        manager.disconnect_dm(websocket, user_id)

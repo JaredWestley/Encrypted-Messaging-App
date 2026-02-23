@@ -1,6 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-
-const WS_BASE_URL = "ws://localhost:8000/api";
+import { WS_BASE_URL } from "./config";
 
 interface DmWebSocketMessage {
   type: string;
@@ -16,6 +15,8 @@ interface UseDmWebSocketOptions {
   onDmStopTyping?: (conversationId: number, userId: number) => void;
   onFriendRequest?: (fromUser: any) => void;
   onFriendAccepted?: (friend: any) => void;
+  onServerNotification?: (serverId: number) => void;
+  onKeyRedistributionNeeded?: (serverId: number) => void;
   onConnectionChange?: (connected: boolean) => void;
 }
 
@@ -28,14 +29,18 @@ export function useDmWebSocket({
   onDmStopTyping,
   onFriendRequest,
   onFriendAccepted,
+  onServerNotification,
+  onKeyRedistributionNeeded,
   onConnectionChange,
 }: UseDmWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 20;
+  const maxReconnectAttempts = 10;
   const intentionalCloseRef = useRef(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const isConnectingRef = useRef(false);
 
   // Store callbacks in refs to avoid reconnecting on callback changes
   const callbacksRef = useRef({
@@ -46,6 +51,8 @@ export function useDmWebSocket({
     onDmStopTyping,
     onFriendRequest,
     onFriendAccepted,
+    onServerNotification,
+    onKeyRedistributionNeeded,
     onConnectionChange,
   });
   callbacksRef.current = {
@@ -56,6 +63,8 @@ export function useDmWebSocket({
     onDmStopTyping,
     onFriendRequest,
     onFriendAccepted,
+    onServerNotification,
+    onKeyRedistributionNeeded,
     onConnectionChange,
   };
 
@@ -69,10 +78,11 @@ export function useDmWebSocket({
       wsRef.current.close();
       wsRef.current = null;
     }
+    isConnectingRef.current = false;
   }, []);
 
   const connect = useCallback(() => {
-    if (!token) return;
+    if (!token || isConnectingRef.current) return;
 
     // Clean up existing connection
     if (wsRef.current) {
@@ -82,21 +92,37 @@ export function useDmWebSocket({
     }
 
     intentionalCloseRef.current = false;
-    const ws = new WebSocket(`${WS_BASE_URL}/ws/dm`);
+    isConnectingRef.current = true;
+    setIsConnecting(true);
+    const ws = new WebSocket(`${WS_BASE_URL}/api/ws/dm`);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      isConnectingRef.current = false;
       // Send auth message as first message
       ws.send(JSON.stringify({ type: "auth", token }));
-      reconnectAttemptsRef.current = 0;
-      setIsConnected(true);
-      callbacksRef.current.onConnectionChange?.(true);
     };
 
     ws.onmessage = (event) => {
       try {
         const data: DmWebSocketMessage = JSON.parse(event.data);
         const callbacks = callbacksRef.current;
+
+        // Handle auth result
+        if (data.type === "auth_success") {
+          reconnectAttemptsRef.current = 0;
+          setIsConnected(true);
+          setIsConnecting(false);
+          callbacksRef.current.onConnectionChange?.(true);
+          return;
+        }
+        
+        if (data.type === "auth_error") {
+          console.error("DM WebSocket auth error:", data.message);
+          setIsConnecting(false);
+          ws.close();
+          return;
+        }
 
         switch (data.type) {
           case "dm_new_message":
@@ -120,6 +146,12 @@ export function useDmWebSocket({
           case "friend_accepted":
             callbacks.onFriendAccepted?.(data.friend);
             break;
+          case "server_new_message_notification":
+            callbacks.onServerNotification?.(data.server_id);
+            break;
+          case "key_redistribution_needed":
+            callbacks.onKeyRedistributionNeeded?.(data.server_id);
+            break;
         }
       } catch {
         // Ignore malformed messages
@@ -127,9 +159,13 @@ export function useDmWebSocket({
     };
 
     ws.onclose = () => {
+      isConnectingRef.current = false;
       wsRef.current = null;
+      const wasConnected = isConnectedRef.current;
       setIsConnected(false);
-      callbacksRef.current.onConnectionChange?.(false);
+      if (wasConnected) {
+        callbacksRef.current.onConnectionChange?.(false);
+      }
 
       // Reconnect with exponential backoff unless intentionally closed
       if (!intentionalCloseRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
@@ -142,9 +178,16 @@ export function useDmWebSocket({
     };
 
     ws.onerror = () => {
-      // onclose will fire after onerror, which handles reconnection
+      // WebSocket errors are normal during connection/disconnection
+      // The onclose handler will manage reconnection
     };
   }, [token]);
+
+  // Store isConnected in ref to avoid dependency issues
+  const isConnectedRef = useRef(false);
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
 
   // Connect when token is available
   useEffect(() => {
@@ -170,6 +213,7 @@ export function useDmWebSocket({
 
   return {
     isConnected,
+    isConnecting,
     sendDmTyping,
     sendDmStopTyping,
   };

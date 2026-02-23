@@ -5,8 +5,8 @@ import { Plus, Settings, X, Users, MessageCircle } from "@tamagui/lucide-icons";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createServer, fetchServers, joinServerWithInvite, fetchConversations, ConversationData } from "../../utils/api";
 import { useAuth } from "../../utils/AuthContext";
+import { BASE_URL } from "../../utils/config";
 import UserSettingsDialog from "./UserSettingsDialog";
-import FriendsList from "./FriendsList";
 
 interface Server {
   id: number;
@@ -29,6 +29,16 @@ interface ServerSidebarProps {
   conversations: ConversationData[];
   onConversationsChanged: () => void;
   userId: number;
+  // Friend request counts
+  incomingRequestsCount?: number;
+  outgoingRequestsCount?: number;
+  // Unread DM tracking
+  unreadDmCount?: number;
+  unreadConversations?: Set<number>;
+  // Unread server tracking
+  unreadServers?: Set<number>;
+  // Friends list
+  onOpenFriends?: () => void;
 }
 
 const ServerSidebar: React.FC<ServerSidebarProps> = ({
@@ -44,6 +54,12 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
   conversations,
   onConversationsChanged,
   userId,
+  incomingRequestsCount = 0,
+  outgoingRequestsCount = 0,
+  unreadDmCount = 0,
+  unreadConversations = new Set(),
+  unreadServers = new Set(),
+  onOpenFriends,
 }) => {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -55,7 +71,6 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [friendsListOpen, setFriendsListOpen] = useState(false);
 
   const showSnackbar = (message: string) => {
     setSnackbarMessage(message);
@@ -152,12 +167,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
     return other?.icon_url || null;
   };
 
-  const handleStartConversation = (conversationId: number) => {
-    onSelectConversation(conversationId);
-    onConversationsChanged();
-  };
-
-  const baseUrl = "http://localhost:8000";
+  const baseUrl = BASE_URL;
 
   return (
     <>
@@ -192,10 +202,29 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
             {/* ─── DM Section ─────────────────────────────── */}
 
             {/* Friends Button */}
-            <YStack alignItems="center" paddingTop={isMobile ? "$2" : "$2"} paddingHorizontal={isMobile ? "$0" : "$0"}>
+            <YStack alignItems="center" paddingTop={isMobile ? "$2" : "$2"} paddingHorizontal={isMobile ? "$0" : "$0"} position="relative">
+              {(incomingRequestsCount > 0 || outgoingRequestsCount > 0) && (
+                <YStack
+                  position="absolute"
+                  right={isMobile ? 8 : -4}
+                  top={isMobile ? 2 : -4}
+                  zIndex={10}
+                  backgroundColor="#f04747"
+                  borderRadius={10}
+                  minWidth={20}
+                  height={20}
+                  justifyContent="center"
+                  alignItems="center"
+                  paddingHorizontal="$1"
+                >
+                  <Text color="white" fontSize="$1" fontWeight="700">
+                    {incomingRequestsCount + outgoingRequestsCount}
+                  </Text>
+                </YStack>
+              )}
               {isMobile ? (
                 <TouchableOpacity
-                  onPress={() => setFriendsListOpen(true)}
+                  onPress={() => onOpenFriends?.()}
                   style={{ width: '100%' }}
                 >
                   <XStack
@@ -221,7 +250,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                   </XStack>
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity onPress={() => setFriendsListOpen(true)}>
+                <TouchableOpacity onPress={() => onOpenFriends?.()}>
                   <YStack
                     width={56}
                     height={56}
@@ -243,73 +272,106 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
               const displayName = getConversationDisplayName(convo);
               const iconUrl = getConversationIcon(convo);
               const isSelected = selectedConversationId === convo.id && !selectedServer;
+              const hasUnread = unreadConversations.has(convo.id);
 
               return (
-                <TouchableOpacity
-                  key={`dm-${convo.id}`}
-                  onPress={() => onSelectConversation(convo.id)}
-                  style={{ width: '100%' }}
-                >
-                  {isMobile ? (
-                    <XStack
-                      backgroundColor={isSelected ? "#5865F2" : "#2f3136"}
-                      padding="$3"
-                      borderRadius="$3"
-                      alignItems="center"
-                      gap="$3"
-                    >
-                      {iconUrl ? (
-                        <Image
-                          source={{ uri: `${baseUrl}${iconUrl}` }}
-                          style={{ width: 48, height: 48, borderRadius: 24 }}
-                        />
-                      ) : (
-                        <YStack
-                          width={48}
-                          height={48}
-                          borderRadius={24}
-                          backgroundColor="#7289da"
-                          justifyContent="center"
-                          alignItems="center"
-                        >
-                          <Text color="white" fontSize="$5" fontWeight="700">
-                            {getFirstLetter(displayName)}
+                <YStack key={`dm-${convo.id}`}>
+                  <TouchableOpacity
+                    onPress={() => onSelectConversation(convo.id)}
+                    style={{ width: '100%' }}
+                  >
+                    {isMobile ? (
+                      <XStack
+                        backgroundColor={isSelected ? "#5865F2" : (hasUnread && !isSelected ? "#2a2d31" : "#2f3136")}
+                        padding="$3"
+                        borderRadius="$3"
+                        alignItems="center"
+                        gap="$3"
+                        position="relative"
+                      >
+                        {/* Unread badge - mobile */}
+                        {hasUnread && !isSelected && (
+                          <YStack
+                            position="absolute"
+                            right={12}
+                            top={12}
+                            zIndex={10}
+                            width={12}
+                            height={12}
+                            borderRadius={6}
+                            backgroundColor="#f04747"
+                          />
+                        )}
+                        {iconUrl ? (
+                          <Image
+                            source={{ uri: `${baseUrl}${iconUrl}` }}
+                            style={{ width: 48, height: 48, borderRadius: 24 }}
+                          />
+                        ) : (
+                          <YStack
+                            width={48}
+                            height={48}
+                            borderRadius={24}
+                            backgroundColor="#7289da"
+                            justifyContent="center"
+                            alignItems="center"
+                          >
+                            <Text color="white" fontSize="$5" fontWeight="700">
+                              {getFirstLetter(displayName)}
+                            </Text>
+                          </YStack>
+                        )}
+                        <YStack flex={1}>
+                          <Text color="white" fontSize="$4" fontWeight={hasUnread && !isSelected ? "800" : "600"} numberOfLines={1}>
+                            {displayName}
+                          </Text>
+                          <Text color={hasUnread && !isSelected ? "#b9bbbe" : "#72767d"} fontSize="$2">
+                            {hasUnread && !isSelected ? "New message" : "Direct Message"}
                           </Text>
                         </YStack>
-                      )}
-                      <YStack flex={1}>
-                        <Text color="white" fontSize="$4" fontWeight="600" numberOfLines={1}>
-                          {displayName}
-                        </Text>
-                        <Text color="#72767d" fontSize="$2">
-                          Direct Message
-                        </Text>
+                      </XStack>
+                    ) : (
+                      <YStack position="relative" alignItems="center">
+                        {/* Unread badge - desktop */}
+                        {hasUnread && !isSelected && (
+                          <YStack
+                            position="absolute"
+                            right={0}
+                            top={0}
+                            zIndex={10}
+                            width={14}
+                            height={14}
+                            borderRadius={7}
+                            backgroundColor="#f04747"
+                            borderWidth={2}
+                            borderColor="#202225"
+                          />
+                        )}
+                        <YStack
+                          width={56}
+                          height={56}
+                          borderRadius={isSelected ? 16 : 28}
+                          backgroundColor={isSelected ? "#5865F2" : "#7289da"}
+                          justifyContent="center"
+                          alignItems="center"
+                          hoverStyle={{ borderRadius: 16 }}
+                          pressStyle={{ backgroundColor: "#5865F2", scale: 0.95 }}
+                        >
+                          {iconUrl ? (
+                            <Image
+                              source={{ uri: `${baseUrl}${iconUrl}` }}
+                              style={{ width: 48, height: 48, borderRadius: isSelected ? 12 : 24 }}
+                            />
+                          ) : (
+                            <Text color="white" fontSize="$4" fontWeight="700">
+                              {getFirstLetter(displayName)}
+                            </Text>
+                          )}
+                        </YStack>
                       </YStack>
-                    </XStack>
-                  ) : (
-                    <YStack
-                      width={56}
-                      height={56}
-                      borderRadius={isSelected ? 16 : 28}
-                      backgroundColor={isSelected ? "#5865F2" : "#7289da"}
-                      justifyContent="center"
-                      alignItems="center"
-                      hoverStyle={{ borderRadius: 16 }}
-                      pressStyle={{ backgroundColor: "#5865F2", scale: 0.95 }}
-                    >
-                      {iconUrl ? (
-                        <Image
-                          source={{ uri: `${baseUrl}${iconUrl}` }}
-                          style={{ width: 48, height: 48, borderRadius: isSelected ? 12 : 24 }}
-                        />
-                      ) : (
-                        <Text color="white" fontSize="$4" fontWeight="700">
-                          {getFirstLetter(displayName)}
-                        </Text>
-                      )}
-                    </YStack>
-                  )}
-                </TouchableOpacity>
+                    )}
+                  </TouchableOpacity>
+                </YStack>
               );
             })}
 
@@ -344,88 +406,124 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
             </YStack>
 
             {/* Server List */}
-            {servers.map((server) => (
-              <TouchableOpacity
-                key={server.id}
-                onPress={() => setSelectedServer(server)}
-                style={{ width: '100%' }}
-              >
-                {isMobile ? (
-                  <XStack
-                    backgroundColor={selectedServer?.id === server.id && !selectedConversationId ? "#5865F2" : "#2f3136"}
-                    padding="$3"
-                    borderRadius="$3"
-                    alignItems="center"
-                    gap="$3"
-                  >
-                    {server.icon_url ? (
-                      <Image
-                        source={{ uri: `${baseUrl}${server.icon_url}` }}
-                        style={{ width: 48, height: 48, borderRadius: 24 }}
-                      />
-                    ) : (
-                      <YStack
-                        width={48}
-                        height={48}
-                        borderRadius={24}
-                        backgroundColor="#5865F2"
-                        justifyContent="center"
-                        alignItems="center"
-                      >
-                        <Text color="white" fontSize="$5" fontWeight="700">
-                          {getFirstLetter(server.name)}
+            {servers.map((server) => {
+              const isSelected = selectedServer?.id === server.id && !selectedConversationId;
+              const hasServerUnread = unreadServers.has(server.id);
+
+              return (
+                <TouchableOpacity
+                  key={server.id}
+                  onPress={() => setSelectedServer(server)}
+                  style={{ width: '100%' }}
+                >
+                  {isMobile ? (
+                    <XStack
+                      backgroundColor={isSelected ? "#5865F2" : (hasServerUnread && !isSelected ? "#2a2d31" : "#2f3136")}
+                      padding="$3"
+                      borderRadius="$3"
+                      alignItems="center"
+                      gap="$3"
+                      position="relative"
+                    >
+                      {/* Server unread badge - mobile */}
+                      {hasServerUnread && !isSelected && (
+                        <YStack
+                          position="absolute"
+                          right={12}
+                          top={12}
+                          zIndex={10}
+                          width={12}
+                          height={12}
+                          borderRadius={6}
+                          backgroundColor="#f04747"
+                        />
+                      )}
+                      {server.icon_url ? (
+                        <Image
+                          source={{ uri: `${baseUrl}${server.icon_url}` }}
+                          style={{ width: 48, height: 48, borderRadius: 24 }}
+                        />
+                      ) : (
+                        <YStack
+                          width={48}
+                          height={48}
+                          borderRadius={24}
+                          backgroundColor="#5865F2"
+                          justifyContent="center"
+                          alignItems="center"
+                        >
+                          <Text color="white" fontSize="$5" fontWeight="700">
+                            {getFirstLetter(server.name)}
+                          </Text>
+                        </YStack>
+                      )}
+                      <YStack flex={1}>
+                        <Text
+                          color="white"
+                          fontSize="$4"
+                          fontWeight={hasServerUnread && !isSelected ? "800" : "600"}
+                          numberOfLines={1}
+                        >
+                          {server.name}
                         </Text>
                       </YStack>
-                    )}
-                    <YStack flex={1}>
-                      <Text
-                        color="white"
-                        fontSize="$4"
-                        fontWeight="600"
-                        numberOfLines={1}
-                      >
-                        {server.name}
-                      </Text>
-                    </YStack>
-                  </XStack>
-                ) : (
-                  <YStack
-                    width={56}
-                    height={56}
-                    borderRadius={(selectedServer?.id === server.id && !selectedConversationId) ? 16 : 28}
-                    backgroundColor={(selectedServer?.id === server.id && !selectedConversationId) ? "#5865F2" : "#2f3136"}
-                    justifyContent="center"
-                    alignItems="center"
-                    hoverStyle={{
-                      borderRadius: 16,
-                    }}
-                    pressStyle={{
-                      backgroundColor: "#5865F2",
-                      scale: 0.95,
-                    }}
-                  >
-                    {server.icon_url ? (
-                      <Image
-                        source={{ uri: `${baseUrl}${server.icon_url}` }}
-                        style={{
-                          width: 48,
-                          height: 48,
-                          borderRadius: (selectedServer?.id === server.id && !selectedConversationId) ? 12 : 24
+                    </XStack>
+                  ) : (
+                    <YStack position="relative" alignItems="center">
+                      {/* Server unread badge - desktop */}
+                      {hasServerUnread && !isSelected && (
+                        <YStack
+                          position="absolute"
+                          right={0}
+                          top={0}
+                          zIndex={10}
+                          width={14}
+                          height={14}
+                          borderRadius={7}
+                          backgroundColor="#f04747"
+                          borderWidth={2}
+                          borderColor="#202225"
+                        />
+                      )}
+                      <YStack
+                        width={56}
+                        height={56}
+                        borderRadius={isSelected ? 16 : 28}
+                        backgroundColor={isSelected ? "#5865F2" : "#2f3136"}
+                        justifyContent="center"
+                        alignItems="center"
+                        hoverStyle={{
+                          borderRadius: 16,
                         }}
-                      />
-                    ) : (
-                      <Text
-                        color="white"
-                        fontSize="$4"
-                        fontWeight="700"
+                        pressStyle={{
+                          backgroundColor: "#5865F2",
+                          scale: 0.95,
+                        }}
                       >
-                        {getFirstLetter(server.name)}
-                      </Text>
-                    )}
-                  </YStack>
-                )}
-              </TouchableOpacity>
-            ))}
+                        {server.icon_url ? (
+                          <Image
+                            source={{ uri: `${baseUrl}${server.icon_url}` }}
+                            style={{
+                              width: 48,
+                              height: 48,
+                              borderRadius: isSelected ? 12 : 24
+                            }}
+                          />
+                        ) : (
+                          <Text
+                            color="white"
+                            fontSize="$4"
+                            fontWeight="700"
+                          >
+                            {getFirstLetter(server.name)}
+                          </Text>
+                        )}
+                      </YStack>
+                    </YStack>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
 
             {servers.length === 0 && conversations.length === 0 && isMobile && (
               <YStack padding="$4" alignItems="center">
@@ -493,13 +591,6 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
           token={token}
         />
       </YStack>
-
-      {/* Friends List Modal */}
-      <FriendsList
-        open={friendsListOpen}
-        onClose={() => setFriendsListOpen(false)}
-        onStartConversation={handleStartConversation}
-      />
 
       {/* Create/Join Server Modal */}
       <Modal

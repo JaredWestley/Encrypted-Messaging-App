@@ -38,6 +38,7 @@ import ServerSidebar from "./components/ServerSidebar";
 import RightSidebar from "./components/RightSidebar";
 import SettingsDialog from "./components/SettingsDialog";
 import UserProfileDialog from "./components/UserProfileDialog";
+import FriendsList from "./components/FriendsList";
 import {
   apiRequest,
   deleteMessage,
@@ -51,14 +52,33 @@ import {
   editDirectMessage,
   deleteDirectMessage,
   syncDirectMessages,
+  fetchFriendRequests,
+  fetchPendingRequests,
+  uploadPublicKey,
+  fetchPublicKey,
+  fetchServerKey,
+  fetchServerMemberPublicKeys,
+  uploadServerKeys,
+  fetchUserRoles,
   ConversationData,
   DirectMessageData,
 } from "../utils/api";
 import { useAuth } from "../utils/AuthContext";
 import { useWebSocket } from "../utils/useWebSocket";
 import { useDmWebSocket } from "../utils/useDmWebSocket";
-
-const API_URL = "http://localhost:8000/api";
+import { API_URL } from "../utils/config";
+import {
+  encryptDmMessage,
+  decryptDmMessage,
+  encryptServerMessage,
+  decryptServerMessage,
+  encryptServerKeyForMember,
+  decryptServerKey,
+  generateServerKey,
+  encodeBase64,
+  decodeBase64,
+} from "../utils/encryption";
+import { getOrCreateKeyPair, getPrivateKey, getServerKey, storeServerKey, clearServerKey } from "../utils/keyManager";
 
 interface Message {
   id: number;
@@ -82,7 +102,7 @@ interface User {
 
 const ChatPage: React.FC = () => {
   const router = useRouter();
-  const { token, username, userId, logout, refreshAccessToken } = useAuth();
+  const { token, username, userId, logout, refreshAccessToken, isLoading: authLoading } = useAuth();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
@@ -109,9 +129,14 @@ const ChatPage: React.FC = () => {
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
 
+  // Ref for showSnackbar so WS callbacks can use the latest version (defined early)
+  const showSnackbarRef = useRef<(msg: string) => void>(() => {});
+
   // Mobile sidebar states
   const [showServerSidebar, setShowServerSidebar] = useState(false);
   const [showUserSidebar, setShowUserSidebar] = useState(false);
+  const [friendsListOpen, setFriendsListOpen] = useState(false);
+  const [friendsRefreshTrigger, setFriendsRefreshTrigger] = useState(0);
 
   // WebSocket & real-time state
   const [wsConnected, setWsConnected] = useState(false);
@@ -124,11 +149,44 @@ const ChatPage: React.FC = () => {
   // ─── DM State ──────────────────────────────────────────────────
   const [conversations, setConversations] = useState<ConversationData[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<number | null>(null);
+
+  // Ref to always have latest selected server/conversation in WS callbacks
+  const selectedServerRef = useRef<Server | null>(null);
+  selectedServerRef.current = selectedServer;
+  const selectedConversationIdRef = useRef<number | null>(null);
+  selectedConversationIdRef.current = selectedConversationId;
   const [dmMessages, setDmMessages] = useState<Message[]>([]);
   const [dmTypingUsers, setDmTypingUsers] = useState<Map<number, string>>(new Map());
   const dmTypingTimeoutsRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const lastDmMessageIdRef = useRef<number | null>(null);
   const dmTypingThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Friend request counts
+  const [incomingRequestsCount, setIncomingRequestsCount] = useState(0);
+  const [outgoingRequestsCount, setOutgoingRequestsCount] = useState(0);
+
+  // Unread DM tracking - set of conversation IDs with new messages
+  const [unreadConversations, setUnreadConversations] = useState<Set<number>>(new Set());
+  const unreadDmCount = unreadConversations.size;
+
+  // Unread server tracking - set of server IDs with new messages
+  const [unreadServers, setUnreadServers] = useState<Set<number>>(new Set());
+
+  // ─── Stable refs for WS callbacks (avoid stale closures) ──────
+  const serversRef = useRef(servers);
+  serversRef.current = servers;
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
+  const logoutRef = useRef(logout);
+  logoutRef.current = logout;
+
+  // ─── Encryption State ──────────────────────────────────────────
+  const myKeyPairRef = useRef<{ publicKey: Uint8Array; secretKey: Uint8Array } | null>(null);
+  const [encryptionReady, setEncryptionReady] = useState(false);
+
+  // ─── Permission State ──────────────────────────────────────────
+  const [channelPermissionDenied, setChannelPermissionDenied] = useState(false);
+  const [canSendMessages, setCanSendMessages] = useState(true);
 
   // Determine which mode we're in
   const isDmMode = selectedConversationId !== null && selectedServer === null;
@@ -136,11 +194,24 @@ const ChatPage: React.FC = () => {
   // Get the active conversation data
   const activeConversation = conversations.find(c => c.id === selectedConversationId);
 
+  // Store DM partner name separately so it persists even if conversations haven't loaded yet
+  const [dmPartnerNameOverride, setDmPartnerNameOverride] = useState<string | null>(null);
+
   const getConversationDisplayName = (convo: ConversationData): string => {
     if (convo.name) return convo.name;
     const other = convo.members.find(m => m.id !== userId);
     return other?.username || "Unknown";
   };
+
+  // Update dmPartnerNameOverride whenever activeConversation or conversations change
+  useEffect(() => {
+    if (activeConversation) {
+      const name = getConversationDisplayName(activeConversation);
+      if (name && name !== "Unknown") {
+        setDmPartnerNameOverride(name);
+      }
+    }
+  }, [activeConversation, userId]);
 
   // Track the last message ID for sync
   useEffect(() => {
@@ -156,10 +227,56 @@ const ChatPage: React.FC = () => {
   }, [dmMessages, isDmMode]);
 
   // ─── Server WebSocket callbacks ──────────────────────────────
-  const handleWsNewMessage = useCallback((message: any) => {
+  const handleWsNewMessage = useCallback(async (message: any) => {
+    // Guard: only add messages for the currently selected server
+    const currentServer = selectedServerRef.current;
+    if (!currentServer) return;
+    if (message.server_id && message.server_id !== currentServer.id) return;
+
+    let decryptedContent = message.content;
+    if (message.is_encrypted && message.nonce) {
+      let serverKeyBytes = await getServerKey(currentServer.id);
+      // If no cached key, try fetching it now (it may have been redistributed)
+      if (!serverKeyBytes && myKeyPairRef.current) {
+        try {
+          const serverKeyData = await fetchServerKey(tokenRef.current!, currentServer.id, logoutRef.current);
+          // Use encrypted_by to get the right public key for decryption
+          const encryptorId = serverKeyData.encrypted_by;
+          const fallbackOwnerId = serversRef.current.find((s: any) => s.id === currentServer.id)?.owner_id;
+          const keyUserId = encryptorId || fallbackOwnerId;
+          if (keyUserId) {
+            const encryptorKeyData = await fetchPublicKey(tokenRef.current!, keyUserId, logoutRef.current);
+            if (encryptorKeyData.public_key) {
+              const encryptorPubKey = decodeBase64(encryptorKeyData.public_key);
+              const decryptedKey = decryptServerKey(
+                serverKeyData.encrypted_key,
+                serverKeyData.nonce,
+                encryptorPubKey,
+                myKeyPairRef.current.secretKey
+              );
+              if (decryptedKey) {
+                await storeServerKey(currentServer.id, decryptedKey);
+                serverKeyBytes = decryptedKey;
+                // Key just became available — reload all messages to decrypt them
+                loadMessagesRef.current?.();
+              }
+            }
+          }
+        } catch {
+          // Key still not available
+        }
+      }
+      if (serverKeyBytes) {
+        const plaintext = decryptServerMessage(message.content, message.nonce, serverKeyBytes);
+        decryptedContent = plaintext || "[Could not decrypt]";
+      } else {
+        decryptedContent = "[Encrypted]";
+      }
+    }
+    const decryptedMsg = { ...message, content: decryptedContent };
     setMessages((prev) => {
-      if (prev.some(m => m.id === message.id)) return prev;
-      return [...prev, message];
+      if (prev.some(m => m.id === decryptedMsg.id)) return prev;
+      return [...prev, decryptedMsg];
     });
   }, []);
 
@@ -173,8 +290,11 @@ const ChatPage: React.FC = () => {
     setMessages((prev) => prev.filter((m) => m.id !== messageId));
   }, []);
 
-  const handleWsTyping = useCallback((uid: number, uname: string) => {
+  const handleWsTyping = useCallback((uid: number, uname: string, serverId?: number) => {
     if (uid === userId) return;
+    // Guard: only show typing for the currently selected server
+    const currentServer = selectedServerRef.current;
+    if (serverId && currentServer && serverId !== currentServer.id) return;
     setTypingUsers((prev) => {
       const next = new Map(prev);
       next.set(uid, uname);
@@ -195,7 +315,10 @@ const ChatPage: React.FC = () => {
     );
   }, [userId]);
 
-  const handleWsStopTyping = useCallback((uid: number) => {
+  const handleWsStopTyping = useCallback((uid: number, serverId?: number) => {
+    // Guard: only process stop_typing for the currently selected server
+    const currentServer = selectedServerRef.current;
+    if (serverId && currentServer && serverId !== currentServer.id) return;
     setTypingUsers((prev) => {
       const next = new Map(prev);
       next.delete(uid);
@@ -209,17 +332,77 @@ const ChatPage: React.FC = () => {
   }, []);
 
   // Load messages function
-  const loadMessagesRef = useRef<() => Promise<void>>();
+  const loadMessagesRef = useRef<() => Promise<void>>(async () => {});
   loadMessagesRef.current = async () => {
     if (!token || !selectedServer) return;
     try {
-      const data = await apiRequest<Message[]>(
+      const res = await fetch(
         `${API_URL}/messages?server_id=${selectedServer.id}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-        logout,
-        refreshAccessToken
+        { headers: { Authorization: `Bearer ${token}` } }
       );
-      setMessages(data);
+      if (res.status === 403) {
+        const body = await res.json().catch(() => ({}));
+        const detail = body?.detail || "";
+        if (detail.includes("permission") || detail.includes("VIEW_CHANNEL")) {
+          setChannelPermissionDenied(true);
+          setMessages([]);
+          return;
+        }
+      }
+      if (!res.ok) {
+        throw new Error("Failed to load messages");
+      }
+      const data = await res.json();
+      setChannelPermissionDenied(false);
+      // Decrypt server messages — try to get the cached key first
+      let serverKeyBytes = await getServerKey(selectedServer.id);
+      // If no cached key but there are encrypted messages, try to fetch it now
+      const hasEncrypted = data.some((m: any) => m.is_encrypted);
+      if (!serverKeyBytes && hasEncrypted && token && myKeyPairRef.current) {
+        // Retry up to 3 times with a delay (another member may be redistributing keys)
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const serverKeyData = await fetchServerKey(token, selectedServer.id, logout);
+            // Use encrypted_by to get the correct public key for decryption
+            const encryptorId = serverKeyData.encrypted_by;
+            const fallbackOwnerId = servers.find(s => s.id === selectedServer.id)?.owner_id;
+            const keyUserId = encryptorId || fallbackOwnerId;
+            if (keyUserId) {
+              const encryptorKeyData = await fetchPublicKey(token, keyUserId, logout);
+              if (encryptorKeyData.public_key) {
+                const encryptorPubKey = decodeBase64(encryptorKeyData.public_key);
+                const decryptedKey = decryptServerKey(
+                  serverKeyData.encrypted_key,
+                  serverKeyData.nonce,
+                  encryptorPubKey,
+                  myKeyPairRef.current!.secretKey
+                );
+                if (decryptedKey) {
+                  await storeServerKey(selectedServer.id, decryptedKey);
+                  serverKeyBytes = decryptedKey;
+                  break;
+                }
+              }
+            }
+          } catch {
+            // Key not available yet — wait and retry
+            if (attempt < 2) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          }
+        }
+      }
+      const decryptedData = data.map((m: any) => {
+        let content = m.content;
+        if (m.is_encrypted && m.nonce && serverKeyBytes) {
+          const plaintext = decryptServerMessage(m.content, m.nonce, serverKeyBytes);
+          content = plaintext || "[Could not decrypt]";
+        } else if (m.is_encrypted) {
+          content = "[Encrypted]";
+        }
+        return { ...m, content };
+      });
+      setMessages(decryptedData);
     } catch {
       setError("Failed to load messages");
     }
@@ -252,7 +435,99 @@ const ChatPage: React.FC = () => {
     }
   }, [selectedServer, token, logout]);
 
-  const { isConnected, sendTyping, sendStopTyping, sendAck } = useWebSocket({
+  const handleServerNotification = useCallback((serverId: number) => {
+    // Only mark as unread if the user is NOT currently viewing that server
+    const currentServer = selectedServerRef.current;
+    if (currentServer && currentServer.id === serverId) return;
+
+    setUnreadServers(prev => {
+      const next = new Set(prev);
+      next.add(serverId);
+      return next;
+    });
+  }, []);
+
+  // When keys are updated on the server, re-fetch and re-decrypt messages
+  const handleKeysUpdated = useCallback(async (serverId: number) => {
+    const currentServer = selectedServerRef.current;
+    if (!currentServer || currentServer.id !== serverId) return;
+    // Clear cached key so we fetch the new one
+    await clearServerKey(serverId);
+    // Re-fetch key and reload messages
+    if (myKeyPairRef.current && tokenRef.current) {
+      try {
+        const serverKeyData = await fetchServerKey(tokenRef.current, serverId, logoutRef.current);
+        const encryptorId = serverKeyData.encrypted_by;
+        const fallbackOwnerId = serversRef.current.find((s: any) => s.id === serverId)?.owner_id;
+        const keyUserId = encryptorId || fallbackOwnerId;
+        if (keyUserId) {
+          const encryptorKeyData = await fetchPublicKey(tokenRef.current, keyUserId, logoutRef.current);
+          if (encryptorKeyData.public_key) {
+            const encryptorPubKey = decodeBase64(encryptorKeyData.public_key);
+            const serverKeyBytes = decryptServerKey(
+              serverKeyData.encrypted_key,
+              serverKeyData.nonce,
+              encryptorPubKey,
+              myKeyPairRef.current.secretKey
+            );
+            if (serverKeyBytes) {
+              await storeServerKey(serverId, serverKeyBytes);
+              // Reload messages with the new key
+              loadMessagesRef.current?.();
+            }
+          }
+        }
+      } catch {
+        // Key not available for us yet
+      }
+    }
+  }, []);
+
+  // When another member needs a key, redistribute if we have it
+  const handleKeyNeeded = useCallback(async (serverId: number, requestingUserId: number) => {
+    if (!myKeyPairRef.current || !tokenRef.current) return;
+    const existingKey = await getServerKey(serverId);
+    if (!existingKey) return; // We don't have the key either
+    // Re-encrypt the key for the requesting user
+    try {
+      const memberKeys = await fetchServerMemberPublicKeys(tokenRef.current, serverId, logoutRef.current);
+      const encryptedKeys: { user_id: number; encrypted_key: string; nonce: string }[] = [];
+      for (const member of memberKeys) {
+        if (!member.public_key) continue;
+        const memberPubKey = decodeBase64(member.public_key);
+        const { encryptedKey, nonce } = encryptServerKeyForMember(
+          existingKey,
+          memberPubKey,
+          myKeyPairRef.current.secretKey
+        );
+        encryptedKeys.push({ user_id: member.user_id, encrypted_key: encryptedKey, nonce });
+      }
+      if (encryptedKeys.length > 0) {
+        await uploadServerKeys(tokenRef.current, serverId, encryptedKeys, logoutRef.current);
+      }
+    } catch {
+      // Failed to redistribute — another member may handle it
+    }
+  }, []);
+
+  // When a server's profile (name/icon) is updated
+  const handleServerUpdated = useCallback((serverId: number, name: string, iconUrl: string | null) => {
+    setServers((prev) =>
+      prev.map((s) => (s.id === serverId ? { ...s, name, icon_url: iconUrl || s.icon_url } : s))
+    );
+    const currentServer = selectedServerRef.current;
+    if (currentServer && currentServer.id === serverId) {
+      setSelectedServer({ ...currentServer, name, icon_url: iconUrl || currentServer.icon_url });
+    }
+  }, []);
+
+  // When a user's profile (username/icon) is updated
+  const handleUserUpdated = useCallback((updatedUserId: number, updatedUsername: string, iconUrl: string | null) => {
+    // Update messages from this user to show the new username
+    // (icon updates are handled by components that fetch user data)
+  }, []);
+
+  const { isConnected, sendTyping, sendStopTyping, sendAck, sendKeyNeeded } = useWebSocket({
     serverId: selectedServer?.id ?? null,
     token,
     onNewMessage: handleWsNewMessage,
@@ -261,42 +536,63 @@ const ChatPage: React.FC = () => {
     onTyping: handleWsTyping,
     onStopTyping: handleWsStopTyping,
     onConnectionChange: handleConnectionChange,
+    onServerNotification: handleServerNotification,
+    onKeysUpdated: handleKeysUpdated,
+    onKeyNeeded: handleKeyNeeded,
+    onServerUpdated: handleServerUpdated,
+    onUserUpdated: handleUserUpdated,
   });
 
   // ─── DM WebSocket callbacks ──────────────────────────────────
-  const handleDmNewMessage = useCallback((conversationId: number, message: any) => {
-    if (conversationId === selectedConversationId) {
+  const handleDmNewMessage = useCallback(async (conversationId: number, message: any) => {
+    // Decrypt incoming DM if encrypted
+    let decryptedContent = message.content;
+    if (message.is_encrypted && message.nonce && message.sender_public_key && myKeyPairRef.current) {
+      const senderPubKey = decodeBase64(message.sender_public_key);
+      const plaintext = decryptDmMessage(message.content, message.nonce, senderPubKey, myKeyPairRef.current.secretKey);
+      decryptedContent = plaintext || "[Could not decrypt]";
+    }
+
+    const currentSelectedId = selectedConversationIdRef.current;
+    if (conversationId === currentSelectedId) {
       setDmMessages((prev) => {
         if (prev.some(m => m.id === message.id)) return prev;
         return [...prev, {
           id: message.id,
           username: message.username,
-          content: message.content,
+          content: decryptedContent,
           user_id: message.user_id,
           timestamp: message.created_at,
         }];
       });
+    } else {
+      // Mark conversation as unread if it's not currently open
+      setUnreadConversations(prev => {
+        const next = new Set(prev);
+        next.add(conversationId);
+        return next;
+      });
     }
-    // Refresh conversations list to update order
-    loadConversations();
-  }, [selectedConversationId]);
+    // Refresh conversations list so new DMs appear in receiver's sidebar
+    loadConversationsRef.current();
+  }, []);
 
   const handleDmMessageEdited = useCallback((conversationId: number, messageId: number, content: string) => {
-    if (conversationId === selectedConversationId) {
+    if (conversationId === selectedConversationIdRef.current) {
       setDmMessages((prev) =>
         prev.map((m) => (m.id === messageId ? { ...m, content } : m))
       );
     }
-  }, [selectedConversationId]);
+  }, []);
 
   const handleDmMessageDeleted = useCallback((conversationId: number, messageId: number) => {
-    if (conversationId === selectedConversationId) {
+    if (conversationId === selectedConversationIdRef.current) {
       setDmMessages((prev) => prev.filter((m) => m.id !== messageId));
     }
-  }, [selectedConversationId]);
+  }, []);
 
   const handleDmTyping = useCallback((conversationId: number, uid: number, uname: string) => {
-    if (uid === userId || conversationId !== selectedConversationId) return;
+    if (uid === userId || conversationId !== selectedConversationIdRef.current) return;
     setDmTypingUsers((prev) => {
       const next = new Map(prev);
       next.set(uid, uname);
@@ -315,10 +611,10 @@ const ChatPage: React.FC = () => {
         dmTypingTimeoutsRef.current.delete(uid);
       }, 3000)
     );
-  }, [userId, selectedConversationId]);
+  }, [userId]);
 
   const handleDmStopTyping = useCallback((conversationId: number, uid: number) => {
-    if (conversationId !== selectedConversationId) return;
+    if (conversationId !== selectedConversationIdRef.current) return;
     setDmTypingUsers((prev) => {
       const next = new Map(prev);
       next.delete(uid);
@@ -329,17 +625,33 @@ const ChatPage: React.FC = () => {
       clearTimeout(existing);
       dmTypingTimeoutsRef.current.delete(uid);
     }
-  }, [selectedConversationId]);
+  }, []);
 
   const handleFriendRequest = useCallback((fromUser: any) => {
-    showSnackbar(`${fromUser.username} sent you a friend request!`);
+    showSnackbarRef.current(`${fromUser.username} sent you a friend request!`);
+    // Update badge count immediately
+    setIncomingRequestsCount(prev => prev + 1);
+    // Trigger FriendsList refresh if it's open
+    setFriendsRefreshTrigger(prev => prev + 1);
   }, []);
 
   const handleFriendAccepted = useCallback((friend: any) => {
-    showSnackbar(`${friend.username} accepted your friend request!`);
+    showSnackbarRef.current(`${friend.username} accepted your friend request!`);
+    // Refresh counts since an outgoing request was accepted
+    setOutgoingRequestsCount(prev => Math.max(0, prev - 1));
+    // Trigger FriendsList refresh if it's open
+    setFriendsRefreshTrigger(prev => prev + 1);
   }, []);
 
-  const { isConnected: dmWsConnected, sendDmTyping, sendDmStopTyping } = useDmWebSocket({
+  // Ref for redistributeServerKey so we can use it before it's defined
+  const redistributeServerKeyRef = useRef<((serverId: number) => Promise<void>) | null>(null);
+
+  const handleKeyRedistributionNeeded = useCallback(async (serverId: number) => {
+    // Owner received notification that a new member joined and needs the server key
+    await redistributeServerKeyRef.current?.(serverId);
+  }, []);
+
+  const { isConnected: dmWsConnected, isConnecting: dmWsConnecting, sendDmTyping, sendDmStopTyping } = useDmWebSocket({
     token,
     onDmNewMessage: handleDmNewMessage,
     onDmMessageEdited: handleDmMessageEdited,
@@ -348,6 +660,8 @@ const ChatPage: React.FC = () => {
     onDmStopTyping: handleDmStopTyping,
     onFriendRequest: handleFriendRequest,
     onFriendAccepted: handleFriendAccepted,
+    onServerNotification: handleServerNotification,
+    onKeyRedistributionNeeded: handleKeyRedistributionNeeded,
   });
 
   // Clear typing users when switching contexts
@@ -360,11 +674,14 @@ const ChatPage: React.FC = () => {
     setDmTypingUsers(new Map());
   }, [selectedConversationId]);
 
-  const showSnackbar = (message: string) => {
+  const showSnackbar = useCallback((message: string) => {
     setSnackbarMessage(message);
     setSnackbarVisible(true);
     setTimeout(() => setSnackbarVisible(false), 3000);
-  };
+  }, []);
+
+  // Update the showSnackbar ref
+  showSnackbarRef.current = showSnackbar;
 
   // ─── Load conversations ──────────────────────────────────────
   const loadConversations = useCallback(async () => {
@@ -377,11 +694,221 @@ const ChatPage: React.FC = () => {
     }
   }, [token, logout]);
 
+  // Ref so WS callbacks always call the latest version
+  const loadConversationsRef = useRef(loadConversations);
+  loadConversationsRef.current = loadConversations;
+
   useEffect(() => {
     if (token) {
       loadConversations();
     }
   }, [token, loadConversations]);
+
+  // ─── Load friend request counts ─────────────────────────────────
+  const loadFriendRequestCounts = useCallback(async () => {
+    if (!token) return;
+    try {
+      const [incoming, outgoing] = await Promise.all([
+        fetchFriendRequests(token, logout),
+        fetchPendingRequests(token, logout),
+      ]);
+      setIncomingRequestsCount(incoming.length);
+      setOutgoingRequestsCount(outgoing.length);
+    } catch {
+      // Silently fail
+    }
+  }, [token, logout]);
+
+  useEffect(() => {
+    if (token) {
+      loadFriendRequestCounts();
+      // Poll for friend request counts every 30 seconds
+      const interval = setInterval(loadFriendRequestCounts, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [token, loadFriendRequestCounts]);
+
+  // ─── Initialize Encryption ─────────────────────────────────────
+  useEffect(() => {
+    if (!token) return;
+    const initEncryption = async () => {
+      try {
+        const keyPair = await getOrCreateKeyPair();
+        myKeyPairRef.current = keyPair;
+        // Upload our public key to the server
+        await uploadPublicKey(token, encodeBase64(keyPair.publicKey), logout);
+        setEncryptionReady(true);
+      } catch (err) {
+        console.error("Failed to initialize encryption:", err);
+        // App still works, just without encryption
+      }
+    };
+    initEncryption();
+  }, [token, logout]);
+
+  // ─── Decrypt helper for messages ──────────────────────────────
+  const decryptMessageContent = useCallback(async (msg: any, mode: "dm" | "server"): Promise<string> => {
+    if (!msg.is_encrypted || !msg.nonce) return msg.content;
+
+    const mySecretKey = myKeyPairRef.current?.secretKey;
+    if (!mySecretKey) return "[Encrypted]";
+
+    if (mode === "dm" && msg.sender_public_key) {
+      const senderPubKey = decodeBase64(msg.sender_public_key);
+      const plaintext = decryptDmMessage(msg.content, msg.nonce, senderPubKey, mySecretKey);
+      return plaintext || "[Could not decrypt]";
+    }
+
+    if (mode === "server" && selectedServer) {
+      const serverKeyBytes = await getServerKey(selectedServer.id);
+      if (serverKeyBytes) {
+        const plaintext = decryptServerMessage(msg.content, msg.nonce, serverKeyBytes);
+        return plaintext || "[Could not decrypt]";
+      }
+      return "[No server key]";
+    }
+
+    return msg.content;
+  }, [selectedServer]);
+
+  // ─── Server key helpers ──────────────────────────────────────
+  /** Fetch the encrypted server key from the backend, decrypt it, and cache locally */
+  const fetchAndCacheServerKey = useCallback(async (serverId: number): Promise<boolean> => {
+    if (!token || !myKeyPairRef.current) return false;
+    try {
+      const serverKeyData = await fetchServerKey(token, serverId, logout);
+      // Use encrypted_by to determine whose public key we need for decryption
+      // The key was encrypted with nacl.box(serverKey, nonce, ourPK, encryptorSK)
+      // To decrypt we need encryptorPK + ourSK
+      const encryptorId = serverKeyData.encrypted_by;
+      if (!encryptorId) {
+        // Legacy fallback: assume server owner encrypted it
+        const serverInfo = servers.find(s => s.id === serverId);
+        if (!serverInfo?.owner_id) return false;
+        const ownerKeyData = await fetchPublicKey(token, serverInfo.owner_id, logout);
+        if (!ownerKeyData.public_key) return false;
+        const ownerPubKey = decodeBase64(ownerKeyData.public_key);
+        const serverKeyBytes = decryptServerKey(
+          serverKeyData.encrypted_key,
+          serverKeyData.nonce,
+          ownerPubKey,
+          myKeyPairRef.current.secretKey
+        );
+        if (serverKeyBytes) {
+          await storeServerKey(serverId, serverKeyBytes);
+          return true;
+        }
+        return false;
+      }
+      const encryptorKeyData = await fetchPublicKey(token, encryptorId, logout);
+      if (!encryptorKeyData.public_key) return false;
+      const encryptorPubKey = decodeBase64(encryptorKeyData.public_key);
+      const serverKeyBytes = decryptServerKey(
+        serverKeyData.encrypted_key,
+        serverKeyData.nonce,
+        encryptorPubKey,
+        myKeyPairRef.current.secretKey
+      );
+      if (serverKeyBytes) {
+        await storeServerKey(serverId, serverKeyBytes);
+        return true;
+      }
+      return false;
+    } catch {
+      // Server key not yet distributed — that's okay
+      return false;
+    }
+  }, [token, logout, servers]);
+
+  /** Generate a new server key and distribute it to all members (owner only) */
+  const initializeServerEncryption = useCallback(async (serverId: number) => {
+    if (!token || !myKeyPairRef.current) return null;
+    try {
+      // Generate a random symmetric key
+      const serverKeyBytes = generateServerKey();
+      // Fetch all member public keys
+      const memberKeys = await fetchServerMemberPublicKeys(token, serverId, logout);
+      const encryptedKeys: { user_id: number; encrypted_key: string; nonce: string }[] = [];
+      for (const member of memberKeys) {
+        if (!member.public_key) continue; // Skip members without public keys
+        const memberPubKey = decodeBase64(member.public_key);
+        const { encryptedKey, nonce } = encryptServerKeyForMember(
+          serverKeyBytes,
+          memberPubKey,
+          myKeyPairRef.current.secretKey
+        );
+        encryptedKeys.push({
+          user_id: member.user_id,
+          encrypted_key: encryptedKey,
+          nonce,
+        });
+      }
+      if (encryptedKeys.length > 0) {
+        await uploadServerKeys(token, serverId, encryptedKeys, logout);
+      }
+      // Cache locally
+      await storeServerKey(serverId, serverKeyBytes);
+      return serverKeyBytes;
+    } catch (err) {
+      console.error("Failed to initialize server encryption:", err);
+      return null;
+    }
+  }, [token, logout]);
+
+  /** Re-distribute the existing server key to any members who don't have it yet (owner only) */
+  const redistributeServerKey = useCallback(async (serverId: number) => {
+    if (!token || !myKeyPairRef.current) return;
+    try {
+      // Get the locally cached server key
+      const existingKey = await getServerKey(serverId);
+      if (!existingKey) return; // No key to redistribute
+
+      // Fetch all member public keys and re-encrypt the key for everyone
+      const memberKeys = await fetchServerMemberPublicKeys(token, serverId, logout);
+      const encryptedKeys: { user_id: number; encrypted_key: string; nonce: string }[] = [];
+      for (const member of memberKeys) {
+        if (!member.public_key) continue;
+        const memberPubKey = decodeBase64(member.public_key);
+        const { encryptedKey, nonce } = encryptServerKeyForMember(
+          existingKey,
+          memberPubKey,
+          myKeyPairRef.current.secretKey
+        );
+        encryptedKeys.push({ user_id: member.user_id, encrypted_key: encryptedKey, nonce });
+      }
+      if (encryptedKeys.length > 0) {
+        await uploadServerKeys(token, serverId, encryptedKeys, logout);
+      }
+    } catch (err) {
+      console.error("Failed to redistribute server key:", err);
+    }
+  }, [token, logout]);
+
+  // Keep the ref in sync so the DM WS callback can call it
+  redistributeServerKeyRef.current = redistributeServerKey;
+
+  // ─── Check server permissions ────────────────────────────────
+  const checkServerPermissions = useCallback(async (serverId: number) => {
+    if (!token || !userId) return;
+    // Owner always has all permissions
+    const serverInfo = servers.find(s => s.id === serverId);
+    if (serverInfo?.owner_id === userId) {
+      setChannelPermissionDenied(false);
+      setCanSendMessages(true);
+      return;
+    }
+    try {
+      const roles = await fetchUserRoles(token, serverId, userId, logout);
+      const perms = roles.flatMap((r: any) => r.permissions || []);
+      setCanSendMessages(perms.includes("SEND_MESSAGES"));
+      // VIEW_CHANNEL will be checked when messages load (403 response)
+      setChannelPermissionDenied(false);
+    } catch {
+      // If we can't fetch roles, assume default
+      setCanSendMessages(true);
+      setChannelPermissionDenied(false);
+    }
+  }, [token, userId, servers, logout]);
 
   // ─── Selection handlers ──────────────────────────────────────
   const handleSelectServer = (server: Server | null) => {
@@ -390,14 +917,74 @@ const ChatPage: React.FC = () => {
     setDmMessages([]);
     setInput("");
     setEditingMessageId(null);
+    // Reset permission state
+    setChannelPermissionDenied(false);
+    setCanSendMessages(true);
+    // Clear unread marker for this server
+    if (server) {
+      setUnreadServers(prev => {
+        if (!prev.has(server.id)) return prev;
+        const next = new Set(prev);
+        next.delete(server.id);
+        return next;
+      });
+      // Check user's permissions for this server
+      checkServerPermissions(server.id);
+      // Fetch and cache server encryption key in background
+      // Then redistribute to any members who don't have it (any key-holder can do this)
+      if (encryptionReady) {
+        fetchAndCacheServerKey(server.id).then((success) => {
+          if (success) {
+            redistributeServerKey(server.id);
+          }
+        });
+      }
+    }
   };
 
-  const handleSelectConversation = (conversationId: number) => {
+  const handleSelectConversation = async (conversationId: number) => {
     setSelectedConversationId(conversationId);
     setSelectedServer(null); // Deselect server when selecting a DM
     setMessages([]);
     setInput("");
     setEditingMessageId(null);
+    // Clear unread marker for this conversation
+    setUnreadConversations(prev => {
+      if (!prev.has(conversationId)) return prev;
+      const next = new Set(prev);
+      next.delete(conversationId);
+      return next;
+    });
+    // Set partner name immediately from current conversations data
+    let convo = conversations.find(c => c.id === conversationId);
+    if (!convo && token) {
+      // Conversation not loaded yet — fetch from API
+      try {
+        const freshConversations = await fetchConversations(token, logout);
+        setConversations(freshConversations);
+        convo = freshConversations.find(c => c.id === conversationId);
+      } catch {
+        // Silently fail — useEffect will try again
+      }
+    }
+    if (convo) {
+      const name = getConversationDisplayName(convo);
+      if (name && name !== "Unknown") {
+        setDmPartnerNameOverride(name);
+      }
+    }
+  };
+
+  const handleOpenFriends = () => {
+    // Close the mobile sidebar first to avoid nested modals
+    setShowServerSidebar(false);
+    // Small delay to let the sidebar modal close before opening friends
+    setTimeout(() => setFriendsListOpen(true), 100);
+  };
+
+  const handleFriendsStartConversation = (conversationId: number) => {
+    handleSelectConversation(conversationId);
+    loadConversations();
   };
 
   // Load servers
@@ -429,7 +1016,9 @@ const ChatPage: React.FC = () => {
       )
         .then((data) => {
           setServers(data);
-          setSelectedServer(null);
+          // Select the first available server, or null if none remain
+          setSelectedServer(data.length > 0 ? data[0] : null);
+          setMessages([]);
           setDidLeaveServer(false);
         })
         .catch(() => {
@@ -458,13 +1047,23 @@ const ChatPage: React.FC = () => {
     if (!token || !selectedConversationId) return;
     try {
       const data = await fetchConversationMessages(token, selectedConversationId, logout);
-      setDmMessages(data.map(m => ({
-        id: m.id,
-        username: m.username,
-        content: m.content,
-        user_id: m.user_id,
-        timestamp: m.created_at,
-      })));
+      // Decrypt encrypted messages
+      const decryptedMessages = await Promise.all(data.map(async (m: any) => {
+        let content = m.content;
+        if (m.is_encrypted && m.nonce && m.sender_public_key && myKeyPairRef.current) {
+          const senderPubKey = decodeBase64(m.sender_public_key);
+          const plaintext = decryptDmMessage(m.content, m.nonce, senderPubKey, myKeyPairRef.current.secretKey);
+          content = plaintext || "[Could not decrypt]";
+        }
+        return {
+          id: m.id,
+          username: m.username,
+          content,
+          user_id: m.user_id,
+          timestamp: m.created_at,
+        };
+      }));
+      setDmMessages(decryptedMessages);
     } catch {
       setError("Failed to load messages");
     }
@@ -498,13 +1097,52 @@ const ChatPage: React.FC = () => {
     if (isDmMode && selectedConversationId) {
       // DM send
       sendDmStopTyping(selectedConversationId);
+      const messageContent = input.trim();
+      const tempId = Date.now();
+      const tempMessage: Message = {
+        id: tempId,
+        username: username || "You",
+        content: messageContent,
+        user_id: userId!,
+        timestamp: new Date().toISOString(),
+      };
+      setDmMessages(prev => [...prev, tempMessage]);
+      setInput("");
       try {
-        const result = await sendDirectMessage(token, selectedConversationId, input.trim(), logout);
-        setInput("");
-        if (!dmWsConnected) {
-          await loadDmMessages();
+        // Encrypt message if encryption is ready and we have a recipient
+        let encryptionParams: { is_encrypted: boolean; nonce: string; sender_public_key: string } | undefined;
+        if (encryptionReady && myKeyPairRef.current && activeConversation) {
+          const recipient = activeConversation.members.find(m => m.id !== userId);
+          if (recipient) {
+            try {
+              const recipientKeyData = await fetchPublicKey(token, recipient.id, logout);
+              if (recipientKeyData.public_key) {
+                const recipientPubKey = decodeBase64(recipientKeyData.public_key);
+                const { ciphertext, nonce } = encryptDmMessage(messageContent, recipientPubKey, myKeyPairRef.current.secretKey);
+                encryptionParams = {
+                  is_encrypted: true,
+                  nonce,
+                  sender_public_key: encodeBase64(myKeyPairRef.current.publicKey),
+                };
+                // Send ciphertext instead of plaintext
+                const result = await sendDirectMessage(token, selectedConversationId, ciphertext, logout, encryptionParams);
+                setDmMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: result.id } : m));
+                loadConversationsRef.current();
+                if (!dmWsConnected) await loadDmMessages();
+                return;
+              }
+            } catch {
+              // Fall through to unencrypted send
+            }
+          }
         }
+        // Unencrypted fallback
+        const result = await sendDirectMessage(token, selectedConversationId, messageContent, logout);
+        setDmMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: result.id } : m));
+        loadConversationsRef.current();
+        if (!dmWsConnected) await loadDmMessages();
       } catch (err: any) {
+        setDmMessages(prev => prev.filter(m => m.id !== tempId));
         if (err.message?.includes("429")) {
           setError("You're sending messages too quickly. Please wait a moment.");
         } else {
@@ -514,15 +1152,53 @@ const ChatPage: React.FC = () => {
     } else if (selectedServer) {
       // Server send
       sendStopTyping();
+      const messageContent = input.trim();
+      const tempId = Date.now();
+      const tempMessage: Message = {
+        id: tempId,
+        username: username || "You",
+        content: messageContent,
+        user_id: userId!,
+        timestamp: new Date().toISOString(),
+      };
+      setMessages(prev => [...prev, tempMessage]);
+      setInput("");
       try {
-        const result: any = await sendMessage(token, input.trim(), selectedServer.id, userId!, logout);
-        setInput("");
+        // Encrypt with server key if available
+        let encryptionParams: { is_encrypted: boolean; nonce: string; sender_public_key: string } | undefined;
+        if (encryptionReady && myKeyPairRef.current) {
+          let serverKeyBytes = await getServerKey(selectedServer.id);
+          // If no server key and we're the owner, initialize encryption for this server
+          if (!serverKeyBytes && selectedServer.owner_id === userId) {
+            serverKeyBytes = await initializeServerEncryption(selectedServer.id);
+          }
+          if (serverKeyBytes) {
+            const { ciphertext, nonce } = encryptServerMessage(messageContent, serverKeyBytes);
+            encryptionParams = {
+              is_encrypted: true,
+              nonce,
+              sender_public_key: encodeBase64(myKeyPairRef.current.publicKey),
+            };
+            const result: any = await sendMessage(token, ciphertext, selectedServer.id, userId!, logout, encryptionParams);
+            if (!isConnected) {
+              await loadMessages();
+            } else if (result?.message_id) {
+              setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: result.message_id } : m));
+              sendAck(result.message_id);
+            }
+            return;
+          }
+        }
+        // Unencrypted fallback
+        const result: any = await sendMessage(token, messageContent, selectedServer.id, userId!, logout);
         if (!isConnected) {
           await loadMessages();
         } else if (result?.message_id) {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: result.message_id } : m));
           sendAck(result.message_id);
         }
       } catch (err: any) {
+        setMessages(prev => prev.filter(m => m.id !== tempId));
         if (err.message?.includes("429")) {
           setError("You're sending messages too quickly. Please wait a moment.");
         } else {
@@ -538,16 +1214,18 @@ const ChatPage: React.FC = () => {
     if (isDmMode && selectedConversationId) {
       try {
         await editDirectMessage(token, selectedConversationId, id, editContent, logout);
+        // Update locally since backend only broadcasts to OTHER members
+        setDmMessages(prev => prev.map(m => m.id === id ? { ...m, content: editContent } : m));
         setEditingMessageId(null);
-        if (!dmWsConnected) await loadDmMessages();
       } catch {
         setError("Failed to update message");
       }
     } else if (selectedServer) {
       try {
         await updateMessage(token, id, editContent, logout);
+        // Update locally since WS echo may not come back for the sender
+        setMessages(prev => prev.map(m => m.id === id ? { ...m, content: editContent } : m));
         setEditingMessageId(null);
-        if (!isConnected) await loadMessages();
       } catch {
         setError("Failed to update message");
       }
@@ -560,16 +1238,18 @@ const ChatPage: React.FC = () => {
     if (isDmMode && selectedConversationId) {
       try {
         await deleteDirectMessage(token, selectedConversationId, id, logout);
+        // Remove locally since backend only broadcasts to OTHER members
+        setDmMessages(prev => prev.filter(m => m.id !== id));
         setMenuVisible(false);
-        if (!dmWsConnected) await loadDmMessages();
       } catch {
         showSnackbar("Failed to delete message");
       }
     } else if (selectedServer) {
       try {
         await deleteMessage(token, selectedServer.id, id, logout);
+        // Remove locally since WS echo may not come back for the sender
+        setMessages(prev => prev.filter(m => m.id !== id));
         setMenuVisible(false);
-        if (!isConnected) await loadMessages();
       } catch {
         showSnackbar("Failed to delete message");
       }
@@ -666,10 +1346,16 @@ const ChatPage: React.FC = () => {
   // Get the active typing users for the current mode
   const activeTypingUsers = isDmMode ? dmTypingUsers : typingUsers;
   const activeWsConnected = isDmMode ? dmWsConnected : isConnected;
+  
+  // Show reconnecting only when actively trying to connect
+  const showReconnecting = isDmMode ? dmWsConnecting : (!isConnected && !isDmMode);
 
-  // Determine header title
-  const headerTitle = isDmMode && activeConversation
-    ? getConversationDisplayName(activeConversation)
+  // Determine header title - show "@username" for DMs
+  const dmPartnerName = isDmMode
+    ? (activeConversation ? getConversationDisplayName(activeConversation) : dmPartnerNameOverride)
+    : null;
+  const headerTitle = isDmMode
+    ? (dmPartnerName ? `@${dmPartnerName}` : "Direct Message")
     : selectedServer?.name || "";
 
   const headerIcon = isDmMode
@@ -746,12 +1432,12 @@ const ChatPage: React.FC = () => {
   );
 
   useEffect(() => {
-    if (!token) {
+    if (!authLoading && !token) {
       router.replace("/(tabs)/pages/Login");
     }
-  }, [token]);
+  }, [token, authLoading]);
 
-  if (!token) {
+  if (authLoading || !token) {
     return null;
   }
 
@@ -776,6 +1462,12 @@ const ChatPage: React.FC = () => {
               conversations={conversations}
               onConversationsChanged={loadConversations}
               userId={userId!}
+              incomingRequestsCount={incomingRequestsCount}
+              outgoingRequestsCount={outgoingRequestsCount}
+              unreadDmCount={unreadDmCount}
+              unreadConversations={unreadConversations}
+              unreadServers={unreadServers}
+              onOpenFriends={() => setFriendsListOpen(true)}
             />
           ) : (
             <Modal
@@ -828,6 +1520,12 @@ const ChatPage: React.FC = () => {
                     conversations={conversations}
                     onConversationsChanged={loadConversations}
                     userId={userId!}
+                    incomingRequestsCount={incomingRequestsCount}
+                    outgoingRequestsCount={outgoingRequestsCount}
+                    unreadDmCount={unreadDmCount}
+                    unreadConversations={unreadConversations}
+                    unreadServers={unreadServers}
+                    onOpenFriends={handleOpenFriends}
                   />
                 </YStack>
               </Pressable>
@@ -849,8 +1547,26 @@ const ChatPage: React.FC = () => {
               >
                 <XStack alignItems="center" gap="$3" flex={1}>
                   {!isDesktop && (
-                    <TouchableOpacity onPress={() => setShowServerSidebar(true)}>
+                    <TouchableOpacity onPress={() => setShowServerSidebar(true)} style={{ position: 'relative' }}>
                       <Menu size={24} color="#b9bbbe" />
+                      {(unreadDmCount + unreadServers.size) > 0 && (
+                        <YStack
+                          position="absolute"
+                          right={-6}
+                          top={-6}
+                          backgroundColor="#f04747"
+                          borderRadius={8}
+                          minWidth={16}
+                          height={16}
+                          justifyContent="center"
+                          alignItems="center"
+                          paddingHorizontal={4}
+                        >
+                          <Text color="white" fontSize={10} fontWeight="700">
+                            {(unreadDmCount + unreadServers.size) > 9 ? "9+" : (unreadDmCount + unreadServers.size)}
+                          </Text>
+                        </YStack>
+                      )}
                     </TouchableOpacity>
                   )}
                   {headerIcon}
@@ -865,7 +1581,7 @@ const ChatPage: React.FC = () => {
                   </Text>
                 </XStack>
                 <XStack gap="$2" alignItems="center">
-                  {!activeWsConnected && (
+                  {showReconnecting && (
                     <XStack
                       backgroundColor="rgba(240,71,71,0.2)"
                       paddingHorizontal="$2"
@@ -923,7 +1639,7 @@ const ChatPage: React.FC = () => {
                 keyboardVerticalOffset={Platform.OS === "ios" ? (isMobile ? 90 : 100) : 0}
               >
                 <YStack flex={1} backgroundColor="#36393f">
-                  {error && (
+                  {error && !channelPermissionDenied && (
                     <Card
                       backgroundColor="#f44336"
                       padding="$3"
@@ -935,17 +1651,39 @@ const ChatPage: React.FC = () => {
                       </Text>
                     </Card>
                   )}
-                  <FlatList
-                    ref={flatListRef}
-                    data={currentMessages}
-                    renderItem={renderMessage}
-                    keyExtractor={(item) => item.id.toString()}
-                    contentContainerStyle={{
-                      padding: isMobile ? 12 : 16,
-                      paddingBottom: 16
-                    }}
-                    onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-                  />
+                  {channelPermissionDenied && !isDmMode ? (
+                    <YStack flex={1} justifyContent="center" alignItems="center" padding="$4">
+                      <YStack
+                        backgroundColor="rgba(255, 152, 0, 0.15)"
+                        borderWidth={1}
+                        borderColor="#ff9800"
+                        borderRadius="$4"
+                        padding="$4"
+                        maxWidth={400}
+                        alignItems="center"
+                        gap="$2"
+                      >
+                        <Text color="#ff9800" fontWeight="700" fontSize="$5" textAlign="center">
+                          Permission Denied
+                        </Text>
+                        <Text color="#ffb74d" fontSize="$3" textAlign="center">
+                          You don't have permission to view messages in this channel. Contact a server admin to update your role.
+                        </Text>
+                      </YStack>
+                    </YStack>
+                  ) : (
+                    <FlatList
+                      ref={flatListRef}
+                      data={currentMessages}
+                      renderItem={renderMessage}
+                      keyExtractor={(item) => item.id.toString()}
+                      contentContainerStyle={{
+                        padding: isMobile ? 12 : 16,
+                        paddingBottom: 16
+                      }}
+                      onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+                    />
+                  )}
                 </YStack>
 
                 {/* Typing Indicator */}
@@ -967,52 +1705,78 @@ const ChatPage: React.FC = () => {
                 )}
 
                 {/* Input Box */}
-                <XStack
-                  padding={isMobile ? "$2" : "$3"}
-                  paddingBottom={Platform.OS === "ios" ? insets.bottom : (isMobile ? "$2" : "$3")}
-                  backgroundColor="#2f3136"
-                  borderTopWidth={1}
-                  borderTopColor="#202225"
-                  alignItems="flex-end"
-                  gap="$2"
-                >
-                  <Input
-                    flex={1}
-                    placeholder={isDmMode && activeConversation
-                      ? `Message ${getConversationDisplayName(activeConversation)}`
-                      : selectedServer
-                        ? `Message ${selectedServer.name}`
-                        : "Type a message..."
-                    }
-                    value={input}
-                    onChangeText={handleInputChange}
-                    multiline
-                    numberOfLines={1}
-                    maxLength={2000}
-                    backgroundColor="#40444b"
-                    borderWidth={0}
-                    color="white"
-                    borderRadius="$4"
-                    padding={isMobile ? "$3" : "$3"}
-                    fontSize={isMobile ? "$4" : "$3"}
-                    onSubmitEditing={isMobile ? undefined : handleSend}
-                  />
-                  <Button
-                    backgroundColor="#5865F2"
-                    onPress={handleSend}
-                    disabled={!input.trim()}
-                    pressStyle={{
-                      backgroundColor: "#4752c4",
-                    }}
-                    disabledStyle={{
-                      opacity: 0.5,
-                    }}
-                    size={isMobile ? "$4" : "$3"}
-                    icon={isMobile ? <Send size={20} color="white" /> : undefined}
+                {(!isDmMode && (!canSendMessages || channelPermissionDenied)) ? (
+                  <XStack
+                    padding={isMobile ? "$2" : "$3"}
+                    paddingBottom={Platform.OS === "ios" ? insets.bottom : (isMobile ? "$2" : "$3")}
+                    backgroundColor="#2f3136"
+                    borderTopWidth={1}
+                    borderTopColor="#202225"
+                    alignItems="center"
+                    justifyContent="center"
                   >
-                    {!isMobile && "Send"}
-                  </Button>
-                </XStack>
+                    <YStack
+                      flex={1}
+                      backgroundColor="rgba(255, 152, 0, 0.1)"
+                      borderWidth={1}
+                      borderColor="rgba(255, 152, 0, 0.3)"
+                      borderRadius="$4"
+                      padding="$3"
+                      alignItems="center"
+                    >
+                      <Text color="#ff9800" fontSize={isMobile ? "$3" : "$2"} textAlign="center">
+                        You do not have permission to send messages in this channel.
+                      </Text>
+                    </YStack>
+                  </XStack>
+                ) : (
+                  <XStack
+                    padding={isMobile ? "$2" : "$3"}
+                    paddingBottom={Platform.OS === "ios" ? insets.bottom : (isMobile ? "$2" : "$3")}
+                    backgroundColor="#2f3136"
+                    borderTopWidth={1}
+                    borderTopColor="#202225"
+                    alignItems="flex-end"
+                    gap="$2"
+                  >
+                    <Input
+                      flex={1}
+                      placeholder={isDmMode && activeConversation
+                        ? `Message ${getConversationDisplayName(activeConversation)}`
+                        : selectedServer
+                          ? `Message ${selectedServer.name}`
+                          : "Type a message..."
+                      }
+                      value={input}
+                      onChangeText={handleInputChange}
+                      multiline
+                      numberOfLines={1}
+                      maxLength={2000}
+                      backgroundColor="#40444b"
+                      borderWidth={0}
+                      color="white"
+                      borderRadius="$4"
+                      padding={isMobile ? "$3" : "$3"}
+                      fontSize={isMobile ? "$4" : "$3"}
+                      onSubmitEditing={isMobile ? undefined : handleSend}
+                    />
+                    <Button
+                      backgroundColor="#5865F2"
+                      onPress={handleSend}
+                      disabled={!input.trim()}
+                      pressStyle={{
+                        backgroundColor: "#4752c4",
+                      }}
+                      disabledStyle={{
+                        opacity: 0.5,
+                      }}
+                      size={isMobile ? "$4" : "$3"}
+                      icon={isMobile ? <Send size={20} color="white" /> : undefined}
+                    >
+                      {!isMobile && "Send"}
+                    </Button>
+                  </XStack>
+                )}
               </KeyboardAvoidingView>
             </YStack>
           ) : (
@@ -1136,6 +1900,18 @@ const ChatPage: React.FC = () => {
             logout={logout}
           />
         )}
+
+        {/* Friends List Modal - rendered at root level to avoid nested Modal issues on mobile */}
+        <FriendsList
+          open={friendsListOpen}
+          onClose={() => {
+            setFriendsListOpen(false);
+            // Refresh badge counts when closing friends list
+            loadFriendRequestCounts();
+          }}
+          onStartConversation={handleFriendsStartConversation}
+          refreshTrigger={friendsRefreshTrigger}
+        />
 
         {/* Snackbar */}
         {snackbarVisible && (

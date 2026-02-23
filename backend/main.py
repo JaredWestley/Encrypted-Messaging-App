@@ -16,7 +16,7 @@ app.add_middleware(SlowAPIMiddleware)
 
 # CORS setup
 from fastapi.middleware.cors import CORSMiddleware
-origins = ["http://localhost:8081"]
+origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,

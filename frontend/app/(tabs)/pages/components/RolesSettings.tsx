@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { YStack, XStack, Text, Input, Button, ScrollView, Spinner, Separator } from "tamagui";
-import { TouchableOpacity, Alert as RNAlert, useWindowDimensions } from "react-native";
+import { TouchableOpacity, Alert as RNAlert, useWindowDimensions, Platform } from "react-native";
 import { Trash2, ChevronLeft, Check } from "@tamagui/lucide-icons";
 import {
   fetchRoles,
@@ -17,9 +17,11 @@ const PERMISSION_LABELS: Record<string, string> = {
   VIEW_CHANNEL: "View Channel",
   SEND_MESSAGES: "Send Messages",
   MANAGE_ROLES: "Manage Roles",
+  MANAGE_SERVER: "Manage Server",
   KICK_MEMBERS: "Kick Members",
   BAN_MEMBERS: "Ban Members",
   DELETE_MESSAGES: "Delete Messages",
+  MANAGE_CHANNELS: "Manage Channels",
 };
 
 interface Role {
@@ -176,31 +178,40 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
 
   const deleteRole = async () => {
     if (!selectedRole) return;
-    RNAlert.alert(
-      "Delete Role",
-      `Delete role "${selectedRole.name}"? This cannot be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            setSaving(true);
-            try {
-              await apiDeleteRole(token, serverId, selectedRole.id, logout);
-              const remaining = roles.filter((r) => r.id !== selectedRole.id);
-              setRoles(remaining);
-              setSelectedRoleId(remaining.length > 0 ? remaining[0].id : null);
-              showToast("Role deleted");
-            } catch (error: any) {
-              RNAlert.alert("Error", error.message || "Failed to delete role");
-            } finally {
-              setSaving(false);
-            }
-          },
-        },
-      ]
-    );
+
+    const doDelete = async () => {
+      setSaving(true);
+      try {
+        await apiDeleteRole(token, serverId, selectedRole.id, logout);
+        const remaining = roles.filter((r) => r.id !== selectedRole.id);
+        setRoles(remaining);
+        setSelectedRoleId(remaining.length > 0 ? remaining[0].id : null);
+        showToast("Role deleted");
+      } catch (error: any) {
+        if (Platform.OS === "web") {
+          window.alert(error.message || "Failed to delete role");
+        } else {
+          RNAlert.alert("Error", error.message || "Failed to delete role");
+        }
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    if (Platform.OS === "web") {
+      if (window.confirm(`Delete role "${selectedRole.name}"? This cannot be undone.`)) {
+        await doDelete();
+      }
+    } else {
+      RNAlert.alert(
+        "Delete Role",
+        `Delete role "${selectedRole.name}"? This cannot be undone.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Delete", style: "destructive", onPress: doDelete },
+        ]
+      );
+    }
   };
 
   if (loading) {
@@ -226,7 +237,12 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
                 backgroundColor={role.id === selectedRoleId ? "#5865F2" : "transparent"}
                 borderRadius="$2"
               >
-                <Text color="white" fontSize="$3">{role.name}</Text>
+                <XStack alignItems="center" gap="$1">
+                  <Text color="white" fontSize="$3">{role.name}</Text>
+                  {role.is_default && (
+                    <Text color="#5865F2" fontSize="$1" fontWeight="600">(Default)</Text>
+                  )}
+                </XStack>
                 <Text color={role.id === selectedRoleId ? "rgba(255,255,255,0.7)" : "#72767d"} fontSize="$1">
                   {role.users?.length || 0} members · {role.permissions?.length || 0} permissions
                 </Text>
@@ -304,10 +320,10 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
             <Button
               circular
               size="$4"
-              backgroundColor="#f04747"
+              backgroundColor={selectedRole.is_default ? "#555" : "#f04747"}
               icon={<Trash2 size={18} color="white" />}
-              onPress={deleteRole}
-              disabled={saving}
+              onPress={selectedRole.is_default ? () => RNAlert.alert("Cannot Delete", "The default role cannot be deleted.") : deleteRole}
+              disabled={saving || selectedRole.is_default}
             />
           </XStack>
 

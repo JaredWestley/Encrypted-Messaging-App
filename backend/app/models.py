@@ -12,6 +12,7 @@ class User(SQLModel, table=True):
     email: str = Field(unique=True, index=True)
     password: str
     icon_url: Optional[str]
+    public_key: Optional[str] = Field(default=None)  # Base64-encoded X25519 public key
     created_at: datetime = Field(default_factory=datetime.utcnow)
     memberships: List["ServerMembership"] = Relationship(back_populates="user")
 
@@ -30,6 +31,9 @@ class Message(SQLModel, table=True):
     server_id: int = Field(foreign_key="server.id")
     server: "Server" = Relationship(back_populates="messages")
     user_id: int
+    is_encrypted: bool = Field(default=False)
+    nonce: Optional[str] = Field(default=None)  # Base64-encoded nonce
+    sender_public_key: Optional[str] = Field(default=None)  # Base64 sender public key
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -68,6 +72,7 @@ class ServerMembership(SQLModel, table=True):
                 ServerMembership.server_id == foreign(ServerMembershipRole.server_id),
             ),
             "foreign_keys": lambda: [ServerMembershipRole.user_id, ServerMembershipRole.server_id],
+            "cascade": "all, delete-orphan",
         }
     )
 
@@ -102,10 +107,15 @@ class Role(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     server_id: int = Field(foreign_key="server.id")
     name: str
+    is_default: bool = Field(default=False)
 
     server: "Server" = Relationship(back_populates="roles", sa_relationship_kwargs={"lazy": "selectin"})
-    permissions: List["RolePermission"] = Relationship(back_populates="role")
-    memberships: List["ServerMembershipRole"] = Relationship(back_populates="role")
+    permissions: List["RolePermission"] = Relationship(
+        back_populates="role", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    memberships: List["ServerMembershipRole"] = Relationship(
+        back_populates="role", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
     @property
     def users(self):
@@ -168,6 +178,20 @@ class DirectMessage(SQLModel, table=True):
     conversation_id: int = Field(foreign_key="conversation.id", index=True)
     user_id: int = Field(foreign_key="user.id")
     content: str
+    is_encrypted: bool = Field(default=False)
+    nonce: Optional[str] = Field(default=None)  # Base64-encoded nonce
+    sender_public_key: Optional[str] = Field(default=None)  # Base64 sender public key
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     conversation: "Conversation" = Relationship(back_populates="messages")
+
+
+# Server encryption keys (symmetric key encrypted per-member with their public key)
+class ServerKey(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    server_id: int = Field(foreign_key="server.id", index=True)
+    user_id: int = Field(foreign_key="user.id")
+    encrypted_key: str  # Base64: the server's symmetric key encrypted with this user's public key
+    nonce: str  # Base64: nonce used for the encryption
+    encrypted_by: Optional[int] = Field(default=None, foreign_key="user.id")  # Who encrypted this key
+    created_at: datetime = Field(default_factory=datetime.utcnow)

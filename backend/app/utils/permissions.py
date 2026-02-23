@@ -5,9 +5,11 @@ SERVER_PERMISSIONS = [
   "VIEW_CHANNEL",
   "SEND_MESSAGES",
   "MANAGE_ROLES",
+  "MANAGE_SERVER",
   "KICK_MEMBERS",
   "BAN_MEMBERS",
   "DELETE_MESSAGES",
+  "MANAGE_CHANNELS",
 ]
 
 def is_server_owner(user: User, server_id: int, session: Session) -> bool:

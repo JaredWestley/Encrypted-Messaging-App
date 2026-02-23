@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { YStack, XStack, Text, Button, Input, ScrollView, Card } from "tamagui";
-import { Modal, TouchableOpacity, Alert as RNAlert, useWindowDimensions } from "react-native";
+import { Modal, TouchableOpacity, Alert as RNAlert, useWindowDimensions, Platform } from "react-native";
 import { X } from "@tamagui/lucide-icons";
-import { leaveServer, generateInviteLink } from "../../utils/api";
+import { leaveServer, generateInviteLink, fetchUserRoles } from "../../utils/api";
 import RolesSettings from "./RolesSettings";
 import AdminPanel from "./AdminPanel";
 import ServerSettings from "./ServerSettings";
@@ -46,40 +46,120 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const isMobile = width < 600;
-  const [selectedPage, setSelectedPage] = useState<"Admin" | "Invite" | "Roles" | "Server Settings">("Admin");
+  const [selectedPage, setSelectedPage] = useState<"Admin" | "Invite" | "Roles" | "Server Settings">("Invite");
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [inviteRefreshCounter, setInviteRefreshCounter] = useState(0);
+  const [userPermissions, setUserPermissions] = useState<string[]>([]);
+
+  // Fetch user's permissions for this server
+  useEffect(() => {
+    if (!open || !token || !serverId || !userId) return;
+    fetchUserRoles(token, serverId, userId, logout)
+      .then((roles) => {
+        const perms = roles.flatMap((role: any) => role.permissions || []);
+        setUserPermissions(perms);
+      })
+      .catch(() => setUserPermissions([]));
+  }, [open, token, serverId, userId, logout]);
+
+  // Determine which tabs are visible based on permissions
+  const visiblePages = useMemo(() => {
+    const pages: ("Admin" | "Invite" | "Roles" | "Server Settings")[] = [];
+
+    // Admin: owner or has KICK_MEMBERS or BAN_MEMBERS
+    if (isOwner || userPermissions.includes("KICK_MEMBERS") || userPermissions.includes("BAN_MEMBERS")) {
+      pages.push("Admin");
+    }
+
+    // Invite: all members can invite
+    pages.push("Invite");
+
+    // Roles: owner or has MANAGE_ROLES
+    if (isOwner || userPermissions.includes("MANAGE_ROLES")) {
+      pages.push("Roles");
+    }
+
+    // Server Settings: owner or has MANAGE_SERVER
+    if (isOwner || userPermissions.includes("MANAGE_SERVER")) {
+      pages.push("Server Settings");
+    }
+
+    return pages;
+  }, [isOwner, userPermissions]);
+
+  // Reset selected page if it's no longer visible
+  useEffect(() => {
+    if (visiblePages.length > 0 && !visiblePages.includes(selectedPage)) {
+      setSelectedPage(visiblePages[0]);
+    }
+  }, [visiblePages, selectedPage]);
 
   const handleLeave = async () => {
     if (isOwner) {
-      RNAlert.alert("Cannot Leave", "You are the owner and cannot leave your own server");
+      if (Platform.OS === "web") {
+        window.alert("You are the owner and cannot leave your own server.");
+      } else {
+        RNAlert.alert("Cannot Leave", "You are the owner and cannot leave your own server");
+      }
       return;
     }
-    
-    RNAlert.alert(
-      "Leave Server",
-      "Are you sure you want to leave this server?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Leave",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              setLoading(true);
-              await leaveServer(token, serverId, logout);
-              setDidLeaveServer(true);
-              onClose();
-            } catch (err: any) {
-              RNAlert.alert("Error", err.message || "Failed to leave server");
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]
-    );
+
+    const doLeave = async () => {
+      try {
+        setLoading(true);
+        await leaveServer(token, serverId, logout);
+        setDidLeaveServer(true);
+        onClose();
+      } catch (err: any) {
+        if (Platform.OS === "web") {
+          window.alert(err.message || "Failed to leave server");
+        } else {
+          RNAlert.alert("Error", err.message || "Failed to leave server");
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (Platform.OS === "web") {
+      if (window.confirm("Are you sure you want to leave this server?")) {
+        await doLeave();
+      }
+    } else {
+      RNAlert.alert(
+        "Leave Server",
+        "Are you sure you want to leave this server?",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Leave", style: "destructive", onPress: doLeave },
+        ]
+      );
+    }
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+      // Fallback for older browsers
+      if (Platform.OS === "web" && typeof document !== "undefined") {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+        return true;
+      }
+    } catch {
+      // Copy failed
+    }
+    return false;
   };
 
   const handleGenerateInvite = async () => {
@@ -88,14 +168,25 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
       const res = await generateInviteLink(token, serverId, logout);
       setInviteLink(res.token);
       setInviteRefreshCounter((prev) => prev + 1);
+      // Auto-copy to clipboard on generation
+      const copied = await copyToClipboard(res.token);
+      if (Platform.OS === "web") {
+        window.alert(copied ? "Invite token generated and copied to clipboard!" : "Invite token generated! Copy it manually.");
+      } else {
+        RNAlert.alert("Success", copied ? "Invite token generated and copied to clipboard!" : "Invite token generated!");
+      }
     } catch (err: any) {
-      RNAlert.alert("Error", err.message || "Failed to generate invite");
+      if (Platform.OS === "web") {
+        window.alert(err.message || "Failed to generate invite");
+      } else {
+        RNAlert.alert("Error", err.message || "Failed to generate invite");
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const pages = ["Admin", "Invite", "Roles", "Server Settings"] as const;
+  const pages = visiblePages;
 
   // Whether the current page needs its own flex layout (not wrapped in ScrollView)
   const isFlexPage = selectedPage === "Roles";
@@ -141,13 +232,14 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                     borderWidth={1}
                     borderColor="#5865F2"
                     onPress={async () => {
-                      try {
-                        if (typeof navigator !== "undefined" && navigator.clipboard) {
-                          await navigator.clipboard.writeText(inviteLink);
-                        }
-                        RNAlert.alert("Copied", "Invite token copied to clipboard");
-                      } catch {
-                        RNAlert.alert("Info", "Select and copy the token manually");
+                      const copied = await copyToClipboard(inviteLink);
+                      if (Platform.OS === "web") {
+                        window.alert(copied ? "Invite token copied to clipboard!" : "Could not copy automatically. Please select and copy the token manually.");
+                      } else {
+                        RNAlert.alert(
+                          copied ? "Copied" : "Info",
+                          copied ? "Invite token copied to clipboard" : "Select and copy the token manually"
+                        );
                       }
                     }}
                   >
@@ -181,7 +273,24 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
           currentName={serverName || ""}
           isOwner={isOwner}
           onServerRenamed={(newName) => {
-            console.log("Server renamed to", newName);
+            // Update the server name in the servers list and selected server
+            setServers((prev) =>
+              prev.map((s) => (s.id === serverId ? { ...s, name: newName } : s))
+            );
+            if (selectedServer && selectedServer.id === serverId) {
+              setSelectedServer({ ...selectedServer, name: newName });
+            }
+          }}
+          onServerIconUpdated={(newIconUrl) => {
+            // Append cache-buster to force image refresh
+            const cacheBusted = `${newIconUrl}?t=${Date.now()}`;
+            // Update the server icon in the servers list and selected server
+            setServers((prev) =>
+              prev.map((s) => (s.id === serverId ? { ...s, icon_url: cacheBusted } : s))
+            );
+            if (selectedServer && selectedServer.id === serverId) {
+              setSelectedServer({ ...selectedServer, icon_url: cacheBusted });
+            }
           }}
           onServerDeleted={() => {
             setDidLeaveServer(true);
@@ -226,39 +335,43 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
         {isMobile ? (
           /* Mobile: Horizontal tab bar + vertical content */
           <YStack flex={1} backgroundColor="#2f3136">
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} backgroundColor="#202225">
-              <XStack padding="$2" gap="$2">
-                {pages.map((page) => (
-                  <TouchableOpacity key={page} onPress={() => setSelectedPage(page)}>
-                    <YStack
-                      paddingHorizontal="$3"
-                      paddingVertical="$2"
-                      backgroundColor={selectedPage === page ? "#5865F2" : "#2f3136"}
-                      borderRadius="$3"
-                    >
-                      <Text color="white" fontSize="$3" numberOfLines={1}>
-                        {page}
-                      </Text>
-                    </YStack>
-                  </TouchableOpacity>
-                ))}
-                <TouchableOpacity onPress={handleLeave} disabled={isOwner}>
+            <XStack
+              backgroundColor="#202225"
+              paddingHorizontal="$2"
+              paddingVertical="$2"
+              gap="$2"
+              flexWrap="wrap"
+            >
+              {pages.map((page) => (
+                <TouchableOpacity key={page} onPress={() => setSelectedPage(page)}>
                   <YStack
                     paddingHorizontal="$3"
                     paddingVertical="$2"
-                    backgroundColor="#2f3136"
+                    backgroundColor={selectedPage === page ? "#5865F2" : "#2f3136"}
                     borderRadius="$3"
-                    borderWidth={1}
-                    borderColor="#f04747"
-                    opacity={isOwner ? 0.5 : 1}
                   >
-                    <Text color="#f04747" fontSize="$3" numberOfLines={1}>
-                      Leave
+                    <Text color="white" fontSize="$3" numberOfLines={1}>
+                      {page}
                     </Text>
                   </YStack>
                 </TouchableOpacity>
-              </XStack>
-            </ScrollView>
+              ))}
+              <TouchableOpacity onPress={handleLeave} disabled={isOwner}>
+                <YStack
+                  paddingHorizontal="$3"
+                  paddingVertical="$2"
+                  backgroundColor="#2f3136"
+                  borderRadius="$3"
+                  borderWidth={1}
+                  borderColor="#f04747"
+                  opacity={isOwner ? 0.5 : 1}
+                >
+                  <Text color="#f04747" fontSize="$3" numberOfLines={1}>
+                    Leave
+                  </Text>
+                </YStack>
+              </TouchableOpacity>
+            </XStack>
             {isFlexPage ? (
               <YStack flex={1}>
                 {renderFlexContent()}

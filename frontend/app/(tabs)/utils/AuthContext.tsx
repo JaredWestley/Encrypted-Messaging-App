@@ -2,7 +2,7 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from "react";
 import { setSecureItem, getSecureItem, deleteSecureItem } from "./secureStorage";
 
-const API_URL = "http://localhost:8000/api";
+import { API_URL } from "./config";
 
 interface AuthContextType {
   token: string | null;

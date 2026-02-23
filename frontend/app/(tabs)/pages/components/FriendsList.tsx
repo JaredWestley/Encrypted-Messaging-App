@@ -39,11 +39,13 @@ import {
   FriendshipData,
 } from "../../utils/api";
 import { useAuth } from "../../utils/AuthContext";
+import { BASE_URL } from "../../utils/config";
 
 interface FriendsListProps {
   open: boolean;
   onClose: () => void;
   onStartConversation: (conversationId: number) => void;
+  refreshTrigger?: number;
 }
 
 type Tab = "friends" | "incoming" | "outgoing";
@@ -52,6 +54,7 @@ const FriendsList: React.FC<FriendsListProps> = ({
   open,
   onClose,
   onStartConversation,
+  refreshTrigger = 0,
 }) => {
   const { token, logout } = useAuth();
   const { width } = useWindowDimensions();
@@ -67,7 +70,7 @@ const FriendsList: React.FC<FriendsListProps> = ({
   const [snackbarMessage, setSnackbarMessage] = useState("");
   const [snackbarVisible, setSnackbarVisible] = useState(false);
 
-  const baseUrl = "http://localhost:8000";
+  const baseUrl = BASE_URL;
 
   const showSnackbar = (message: string) => {
     setSnackbarMessage(message);
@@ -99,6 +102,24 @@ const FriendsList: React.FC<FriendsListProps> = ({
       loadData();
     }
   }, [open, loadData]);
+
+  // Auto-refresh friend requests when modal is open
+  useEffect(() => {
+    if (!open || !token) return;
+
+    const interval = setInterval(() => {
+      loadData();
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [open, token, loadData]);
+
+  // Refresh when a WebSocket event triggers a change (e.g., new friend request)
+  useEffect(() => {
+    if (open && refreshTrigger > 0) {
+      loadData();
+    }
+  }, [refreshTrigger, open, loadData]);
 
   const handleSendRequest = async () => {
     if (!token || !addFriendUsername.trim()) return;

@@ -3,6 +3,7 @@ import { YStack, XStack, Text, ScrollView, Spinner } from "tamagui";
 import { TouchableOpacity, Image } from "react-native";
 import { X } from "@tamagui/lucide-icons";
 import { fetchUsersInServer } from "../../utils/api";
+import { BASE_URL } from "../../utils/config";
 
 interface User {
   id: number;
@@ -129,7 +130,7 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
                 >
                   {user.icon_url ? (
                     <Image
-                      source={{ uri: `http://localhost:8000${user.icon_url}` }}
+                      source={{ uri: `${BASE_URL}${user.icon_url}` }}
                       style={{ width: 32, height: 32, borderRadius: 16 }}
                     />
                   ) : (

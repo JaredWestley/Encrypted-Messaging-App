@@ -4,6 +4,7 @@ import { Modal, TouchableOpacity, Image, Alert as RNAlert, Platform } from "reac
 import { X } from "@tamagui/lucide-icons";
 import * as ImagePicker from "expo-image-picker";
 import { updateUserSettings, fetchCurrentUser, uploadUserIcon } from "../../utils/api";
+import { BASE_URL } from "../../utils/config";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface UserSettingsDialogProps {
@@ -125,7 +126,7 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
         setCurrentUsername(user.username);
         setCurrentEmail(user.email);
         setCurrentIcon(user.icon_url);
-        setUserIconUrl(user.icon_url ? "http://localhost:8000" + user.icon_url : null);
+        setUserIconUrl(user.icon_url ? BASE_URL + user.icon_url : null);
       } catch (error) {
         console.error("Failed to fetch user info:", error);
       }
@@ -179,11 +180,20 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
 
     try {
       const res = await uploadUserIcon(formData, token, logout);
-      RNAlert.alert("Success", "Icon uploaded successfully!");
-      setUserIconUrl("http://localhost:8000" + res.icon_url);
+      if (Platform.OS === "web") {
+        window.alert("Icon uploaded successfully!");
+      } else {
+        RNAlert.alert("Success", "Icon uploaded successfully!");
+      }
+      // Cache-bust the URL so the browser loads the new image
+      setUserIconUrl(BASE_URL + res.icon_url + "?t=" + Date.now());
       setPreviewUri(null);
     } catch (error: any) {
-      RNAlert.alert("Error", "Upload failed: " + error.message);
+      if (Platform.OS === "web") {
+        window.alert("Upload failed: " + error.message);
+      } else {
+        RNAlert.alert("Error", "Upload failed: " + error.message);
+      }
     }
   };
 
@@ -289,7 +299,7 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
                 />
               ) : currentIcon ? (
                 <Image
-                  source={{ uri: `http://localhost:8000${currentIcon}` }}
+                  source={{ uri: `${BASE_URL}${currentIcon}` }}
                   style={{ width: 80, height: 80, borderRadius: 40, marginBottom: 8 }}
                 />
               ) : (

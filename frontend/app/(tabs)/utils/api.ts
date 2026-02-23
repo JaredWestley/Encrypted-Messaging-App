@@ -1,6 +1,6 @@
 // import { useAuth } from "./context/AuthContext";
 
-const API_URL = "http://localhost:8000/api";
+import { API_URL } from "./config";
 
 interface User {
   id: number;
@@ -152,15 +152,27 @@ export async function fetchMessages(token: string, serverId: number, logout: () 
   }, logout);
 }
 
-export async function sendMessage(token: string, content: string, serverId: number, userId: number, logout: () => void) {
-  console.log("Sending message with:", { content, serverId, userId });
+export async function sendMessage(
+  token: string,
+  content: string,
+  serverId: number,
+  userId: number,
+  logout: () => void,
+  encryption?: { is_encrypted: boolean; nonce: string; sender_public_key: string }
+) {
+  const body: any = { content, server_id: serverId, user_id: userId };
+  if (encryption) {
+    body.is_encrypted = encryption.is_encrypted;
+    body.nonce = encryption.nonce;
+    body.sender_public_key = encryption.sender_public_key;
+  }
   return apiRequest(`${API_URL}/messages`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ content, server_id: serverId, user_id: userId }),
+    body: JSON.stringify(body),
   }, logout);
 }
 
@@ -512,4 +524,303 @@ export async function uploadServerIcon(
     },
     body: formData,
   }, logout);
+}
+
+export interface FriendshipData {
+  id: number;
+  user_id: number;
+  friend_id: number;
+  status: string;
+  created_at: string;
+  friend: {
+    id: number;
+    username: string;
+    icon_url?: string;
+    created_at: string;
+  };
+}
+
+export async function fetchFriends(token: string, logout: () => void): Promise<FriendshipData[]> {
+  return apiRequest<FriendshipData[]>(`${API_URL}/friends`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }, logout);
+}
+
+export async function fetchFriendRequests(token: string, logout: () => void): Promise<FriendshipData[]> {
+  return apiRequest<FriendshipData[]>(`${API_URL}/friends/requests`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }, logout);
+}
+
+export async function fetchPendingRequests(token: string, logout: () => void): Promise<FriendshipData[]> {
+  return apiRequest<FriendshipData[]>(`${API_URL}/friends/pending`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }, logout);
+}
+
+export async function sendFriendRequest(
+  token: string,
+  username: string,
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest<{ detail: string }>(`${API_URL}/friends/request`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ friend_username: username }),
+  }, logout);
+}
+
+export async function acceptFriendRequest(
+  token: string,
+  friendshipId: number,
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest<{ detail: string }>(`${API_URL}/friends/${friendshipId}/accept`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  }, logout);
+}
+
+export async function rejectFriendRequest(
+  token: string,
+  friendshipId: number,
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest<{ detail: string }>(`${API_URL}/friends/${friendshipId}/reject`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  }, logout);
+}
+
+export async function removeFriend(
+  token: string,
+  friendId: number,
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest<{ detail: string }>(`${API_URL}/friends/${friendId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  }, logout);
+}
+
+export interface ConversationData {
+  id: number;
+  name?: string;
+  is_group: boolean;
+  created_at: string;
+  members: {
+    id: number;
+    username: string;
+    icon_url?: string;
+    created_at: string;
+  }[];
+}
+
+export async function createOrGetConversation(
+  token: string,
+  friendId: number,
+  logout: () => void
+): Promise<ConversationData> {
+  return apiRequest<ConversationData>(`${API_URL}/conversations`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ friend_id: friendId }),
+  }, logout);
+}
+
+export interface DirectMessageData {
+  id: number;
+  conversation_id: number;
+  user_id: number;
+  username: string;
+  content: string;
+  created_at: string;
+}
+
+export async function fetchConversationMessages(
+  token: string,
+  conversationId: number,
+  logout: () => void
+): Promise<DirectMessageData[]> {
+  return apiRequest<DirectMessageData[]>(`${API_URL}/conversations/${conversationId}/messages`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }, logout);
+}
+
+export async function sendDirectMessage(
+  token: string,
+  conversationId: number,
+  content: string,
+  logout: () => void,
+  encryption?: { is_encrypted: boolean; nonce: string; sender_public_key: string }
+): Promise<DirectMessageData> {
+  const body: any = { content };
+  if (encryption) {
+    body.is_encrypted = encryption.is_encrypted;
+    body.nonce = encryption.nonce;
+    body.sender_public_key = encryption.sender_public_key;
+  }
+  return apiRequest<DirectMessageData>(`${API_URL}/conversations/${conversationId}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  }, logout);
+}
+
+export async function editDirectMessage(
+  token: string,
+  conversationId: number,
+  messageId: number,
+  content: string,
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest<{ detail: string }>(`${API_URL}/conversations/${conversationId}/messages/${messageId}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ content }),
+  }, logout);
+}
+
+export async function deleteDirectMessage(
+  token: string,
+  conversationId: number,
+  messageId: number,
+  logout: () => void
+): Promise<void> {
+  await apiRequest(`${API_URL}/conversations/${conversationId}/messages/${messageId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  }, logout);
+}
+
+export async function syncDirectMessages(
+  token: string,
+  conversationId: number,
+  lastMessageId: number,
+  logout: () => void
+): Promise<DirectMessageData[]> {
+  return apiRequest<DirectMessageData[]>(
+    `${API_URL}/conversations/${conversationId}/messages/sync?after_id=${lastMessageId}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+export async function fetchConversations(
+  token: string,
+  logout: () => void
+): Promise<ConversationData[]> {
+  return apiRequest<ConversationData[]>(
+    `${API_URL}/conversations`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+export async function syncMessages(
+  token: string,
+  serverId: number,
+  lastMessageId: number,
+  logout: () => void
+): Promise<any[]> {
+  return apiRequest<any[]>(
+    `${API_URL}/messages/sync?server_id=${serverId}&after_id=${lastMessageId}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+
+// ─── Encryption Key Management ────────────────────────────────────
+
+export async function uploadPublicKey(
+  token: string,
+  publicKey: string,
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest<{ detail: string }>(`${API_URL}/keys/public`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ public_key: publicKey }),
+  }, logout);
+}
+
+export interface PublicKeyData {
+  user_id: number;
+  username: string;
+  public_key: string | null;
+}
+
+export async function fetchPublicKey(
+  token: string,
+  userId: number,
+  logout: () => void
+): Promise<PublicKeyData> {
+  return apiRequest<PublicKeyData>(
+    `${API_URL}/keys/public/${userId}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+export interface ServerKeyData {
+  server_id: number;
+  encrypted_key: string;
+  nonce: string;
+  encrypted_by: number | null;
+}
+
+export async function fetchServerKey(
+  token: string,
+  serverId: number,
+  logout: () => void
+): Promise<ServerKeyData> {
+  return apiRequest<ServerKeyData>(
+    `${API_URL}/keys/server/${serverId}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+export async function uploadServerKeys(
+  token: string,
+  serverId: number,
+  encryptedKeys: { user_id: number; encrypted_key: string; nonce: string }[],
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest<{ detail: string }>(`${API_URL}/keys/server`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ server_id: serverId, encrypted_keys: encryptedKeys }),
+  }, logout);
+}
+
+export async function fetchServerMemberPublicKeys(
+  token: string,
+  serverId: number,
+  logout: () => void
+): Promise<PublicKeyData[]> {
+  return apiRequest<PublicKeyData[]>(
+    `${API_URL}/keys/server/${serverId}/members`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
 }

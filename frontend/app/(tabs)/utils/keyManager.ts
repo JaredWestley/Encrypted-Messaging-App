@@ -1,0 +1,78 @@
+/**
+ * Key lifecycle management — generates, stores, and retrieves encryption keys.
+ *
+ * Private keys are stored in secure storage (Keychain on iOS, Keystore on Android,
+ * AsyncStorage on web). Public keys are uploaded to the server.
+ */
+
+import { setSecureItem, getSecureItem, deleteSecureItem } from "./secureStorage";
+import { generateKeyPair, encodeBase64, decodeBase64 } from "./encryption";
+
+const PRIVATE_KEY_STORAGE_KEY = "encryption_private_key";
+const PUBLIC_KEY_STORAGE_KEY = "encryption_public_key";
+
+// ─── User Keypair ────────────────────────────────────────────────
+
+/** Get the stored keypair, or generate + store a new one */
+export async function getOrCreateKeyPair(): Promise<{
+  publicKey: Uint8Array;
+  secretKey: Uint8Array;
+}> {
+  const existingPrivate = await getSecureItem(PRIVATE_KEY_STORAGE_KEY);
+  const existingPublic = await getSecureItem(PUBLIC_KEY_STORAGE_KEY);
+
+  if (existingPrivate && existingPublic) {
+    return {
+      publicKey: decodeBase64(existingPublic),
+      secretKey: decodeBase64(existingPrivate),
+    };
+  }
+
+  // Generate new keypair
+  const keyPair = generateKeyPair();
+
+  await setSecureItem(PRIVATE_KEY_STORAGE_KEY, encodeBase64(keyPair.secretKey));
+  await setSecureItem(PUBLIC_KEY_STORAGE_KEY, encodeBase64(keyPair.publicKey));
+
+  return {
+    publicKey: keyPair.publicKey,
+    secretKey: keyPair.secretKey,
+  };
+}
+
+/** Get the stored public key as base64, or null if not generated yet */
+export async function getPublicKeyBase64(): Promise<string | null> {
+  return getSecureItem(PUBLIC_KEY_STORAGE_KEY);
+}
+
+/** Get the stored private key as Uint8Array, or null */
+export async function getPrivateKey(): Promise<Uint8Array | null> {
+  const stored = await getSecureItem(PRIVATE_KEY_STORAGE_KEY);
+  if (!stored) return null;
+  return decodeBase64(stored);
+}
+
+/** Delete stored keys (e.g., on logout) */
+export async function clearKeys(): Promise<void> {
+  await deleteSecureItem(PRIVATE_KEY_STORAGE_KEY);
+  await deleteSecureItem(PUBLIC_KEY_STORAGE_KEY);
+}
+
+// ─── Server Keys Cache ───────────────────────────────────────────
+
+/** Store a decrypted server key in secure storage */
+export async function storeServerKey(serverId: number, serverKey: Uint8Array): Promise<void> {
+  await setSecureItem(`server_key_${serverId}`, encodeBase64(serverKey));
+}
+
+/** Get a cached server key from secure storage */
+export async function getServerKey(serverId: number): Promise<Uint8Array | null> {
+  const stored = await getSecureItem(`server_key_${serverId}`);
+  if (!stored) return null;
+  return decodeBase64(stored);
+}
+
+/** Clear a specific server key (e.g., when leaving) */
+export async function clearServerKey(serverId: number): Promise<void> {
+  await deleteSecureItem(`server_key_${serverId}`);
+}

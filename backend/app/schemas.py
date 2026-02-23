@@ -41,9 +41,15 @@ class MessageCreate(BaseModel):
     server_id: int
     user_id: int
     created_at: Optional[datetime] = None  # or timestamp
+    is_encrypted: bool = False
+    nonce: Optional[str] = None
+    sender_public_key: Optional[str] = None
 
 class MessageUpdate(BaseModel):
     content: str
+    is_encrypted: bool = False
+    nonce: Optional[str] = None
+    sender_public_key: Optional[str] = None
 
 class RoleCreate(BaseModel):
     name: str
@@ -122,6 +128,9 @@ class ConversationRead(BaseModel):
 
 class DirectMessageCreate(BaseModel):
     content: str
+    is_encrypted: bool = False
+    nonce: Optional[str] = None
+    sender_public_key: Optional[str] = None
 
 class DirectMessageRead(BaseModel):
     id: int
@@ -129,7 +138,31 @@ class DirectMessageRead(BaseModel):
     user_id: int
     username: str
     content: str
+    is_encrypted: bool = False
+    nonce: Optional[str] = None
+    sender_public_key: Optional[str] = None
     created_at: datetime
 
     class Config:
         orm_mode = True
+
+
+# ─── Encryption ──────────────────────────────────────────────────
+
+class PublicKeyUpload(BaseModel):
+    public_key: str  # Base64-encoded X25519 public key
+
+class PublicKeyRead(BaseModel):
+    user_id: int
+    username: str
+    public_key: Optional[str] = None
+
+class ServerKeyUpload(BaseModel):
+    server_id: int
+    encrypted_keys: List[dict]  # [{user_id, encrypted_key, nonce}, ...]
+
+class ServerKeyRead(BaseModel):
+    server_id: int
+    encrypted_key: str
+    nonce: str
+    encrypted_by: Optional[int] = None  # User ID of who encrypted this key
