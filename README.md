@@ -1,8 +1,27 @@
+<div align="center">
+  
 # 🔐 Encrypted Messaging App
 
-A privacy-focused, end-to-end encrypted (E2EE) real-time messaging application for web and Mobile supporting text messaging, group communication, media sharing, and peer-to-peer voice/video calls.
+### Secure messaging app with collaborative features and Mobile/Web support.
+
+![Platform](https://img.shields.io/badge/Platform-React%20Native-blue)
+![Backend](https://img.shields.io/badge/Backend-Python-green)
+![License](https://img.shields.io/badge/License-MIT-yellow)
+</div>
+
+---
+
+## 📖 Overview
+
+**Encrypted Messaging App** is a privacy-focused, end-to-end encrypted (E2EE) real-time messaging application for web and Mobile supporting text messaging, group communication, media sharing, and peer-to-peer voice/video calls.
 
 This project was developed as my final year project in university exploring secure, accessible and scalable communication systems.
+
+The application consists of:
+
+- 📱 A React Native (Expo) front-end for web and mobile support.
+- 🧠 A Python-based back-end.
+- 🤖 AI-integrated trading logic.
 
 ---
 
