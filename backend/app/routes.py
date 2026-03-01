@@ -1,19 +1,21 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, Body, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, Body, File, UploadFile, WebSocket, WebSocketDisconnect, Form
 from fastapi.security import OAuth2PasswordBearer
-from fastapi.responses import RedirectResponse
-from typing import List
+from fastapi.responses import Response
+from typing import List, Optional
 from sqlmodel import Session, select, delete
 from app.schemas import (
-    MessageCreate, MessageUpdate, UserCreate, RoleAssign, LoginRequest, Token,
-    UserRead, PublicUserRead, RoleRead, RoleCreate, ServerInviteRead, ServerInviteCreate,
-    ServerRead, ServerUpdate, UserUpdate,
+    MessageCreate, MessageUpdate, UserCreate, RoleAssign, LoginRequest, UserRead, PublicUserRead, 
+    RoleRead, RoleCreate, ServerInviteRead, ServerUpdate, UserUpdate,
     FriendshipRead, FriendRequestCreate, ConversationRead, DirectMessageCreate, DirectMessageRead,
     PublicKeyUpload, PublicKeyRead, ServerKeyUpload, ServerKeyRead,
+    AttachmentRead,
+    VoiceChannelCreate, VoiceChannelRead,
 )
 from app.models import (
     User, Server, Message, ServerMembership, ServerInvite, ServerMembershipRole,
     Role, ServerBan, RolePermission, TokenBlacklist,
     Friendship, Conversation, ConversationMember, DirectMessage, ServerKey,
+    Attachment, VoiceChannel,
 )
 from app.database import get_session, engine
 from app.auth import (
@@ -22,7 +24,7 @@ from app.auth import (
 )
 from app.utils.permissions import is_server_owner, has_permission
 from app.websocket_manager import manager
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 from jose import JWTError, jwt
 from app.rate_limit import limiter
 from sqlalchemy.orm import joinedload
@@ -36,9 +38,15 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UPLOAD_DIR = os.path.join(BASE_DIR, "static", "user_icons")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+ATTACHMENTS_DIR = os.path.join(BASE_DIR, "static", "attachments")
+os.makedirs(ATTACHMENTS_DIR, exist_ok=True)
+
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+BLOCKED_EXTENSIONS = {".exe", ".bat", ".sh", ".cmd", ".msi", ".ps1", ".vbs", ".scr"}
+IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
 def is_token_blacklisted(token: str, session: Session) -> bool:
-    """Check if a token has been blacklisted (e.g. via logout)."""
+    #Check if a token has been blacklisted (e.g. via logout).
     entry = session.exec(select(TokenBlacklist).where(TokenBlacklist.token == token)).first()
     return entry is not None
 
@@ -88,7 +96,7 @@ def require_server_owner(user: User, server_id: int, session: Session):
     return server
 
 def require_permission(user: User, server_id: int, permission: str, session: Session):
-    """Check if user is owner or has the specified permission. Raises 403 if not."""
+    #Check if user is owner or has the specified permission. Raises 403 if not.
     if is_server_owner(user, server_id, session):
         return
     if not has_permission(user, server_id, permission, session):
@@ -131,6 +139,20 @@ async def send_message(
             has_permission(current_user, message.server_id, "SEND_MESSAGES", session)):
         raise HTTPException(status_code=403, detail="You don't have permission to send messages")
 
+    # Validate attachment if provided
+    attachment_data = None
+    if message.attachment_id:
+        att = session.get(Attachment, message.attachment_id)
+        if not att or att.server_id != message.server_id or att.uploader_id != current_user.id:
+            raise HTTPException(status_code=400, detail="Invalid attachment")
+        attachment_data = {
+            "id": att.id,
+            "original_filename": att.original_filename,
+            "mime_type": att.mime_type,
+            "file_size": att.file_size,
+            "encryption_nonce": att.encryption_nonce,
+        }
+
     # Proceed to create the message
     db_message = Message(
         content=message.content,
@@ -139,14 +161,15 @@ async def send_message(
         is_encrypted=message.is_encrypted,
         nonce=message.nonce,
         sender_public_key=message.sender_public_key,
-        created_at=message.created_at or datetime.utcnow()
+        attachment_id=message.attachment_id,
+        created_at=message.created_at or datetime.now(timezone.utc)
     )
     session.add(db_message)
     session.commit()
     session.refresh(db_message)
 
     # Broadcast new message to all WebSocket clients in this server (except sender)
-    await manager.broadcast_to_server(message.server_id, {
+    ws_msg = {
         "type": "new_message",
         "message": {
             "id": db_message.id,
@@ -158,8 +181,10 @@ async def send_message(
             "is_encrypted": db_message.is_encrypted,
             "nonce": db_message.nonce,
             "sender_public_key": db_message.sender_public_key,
+            "attachment": attachment_data,
         }
-    }, exclude_user_id=current_user.id)
+    }
+    await manager.broadcast_to_server(message.server_id, ws_msg, exclude_user_id=current_user.id)
 
     # Send notification to all server members who are NOT connected to this server's WS
     # This allows the frontend to show unread badges on server icons
@@ -185,7 +210,6 @@ async def edit_message(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    print("edit___", session)
     db_message = session.get(Message, message_id)
     if not db_message:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -195,8 +219,6 @@ async def edit_message(
 
     if db_message.user_id != current_user.id:
         # # check if user has permission to edit messages in this server
-        # if not (is_server_owner(current_user, db_message.server_id, session) or
-        #         has_permission(current_user, db_message.server_id, "edit_message", session)):
         raise HTTPException(status_code=403, detail="You can only edit your own messages")
 
     db_message.content = message.content
@@ -209,6 +231,8 @@ async def edit_message(
         "type": "message_edited",
         "message_id": db_message.id,
         "content": db_message.content,
+        "is_encrypted": db_message.is_encrypted,
+        "nonce": db_message.nonce,
     }, exclude_user_id=current_user.id)
 
     return {"detail": "Message edited"}
@@ -224,7 +248,6 @@ async def delete_message(
     if not db_message:
         raise HTTPException(status_code=404, detail="Message not found")
 
-    # Use the passed server_id here
     if is_banned_from_server(current_user.id, server_id, session):
         raise HTTPException(status_code=403, detail="You are banned from this server")
 
@@ -246,7 +269,6 @@ async def delete_message(
 
     return {"detail": "Message deleted"}
 
-
 @router.get("/messages", response_model=List[dict])  # temporary structure
 async def load_messages(
     server_id: int,
@@ -267,7 +289,6 @@ async def load_messages(
     if is_banned_from_server(current_user.id, server_id, session):
         raise HTTPException(status_code=403, detail="You are banned from this server")
 
-    # Check VIEW_CHANNEL permission
     if not (is_server_owner(current_user, server_id, session) or
             has_permission(current_user, server_id, "VIEW_CHANNEL", session)):
         raise HTTPException(status_code=403, detail="You don't have permission to view this channel")
@@ -279,8 +300,9 @@ async def load_messages(
         .where(Message.server_id == server_id)
     ).all()
 
-    results = [
-        {
+    results = []
+    for msg, user in messages:
+        entry = {
             "id": msg.id,
             "content": msg.content,
             "user_id": msg.user_id,
@@ -290,16 +312,30 @@ async def load_messages(
             "is_encrypted": msg.is_encrypted,
             "nonce": msg.nonce,
             "sender_public_key": msg.sender_public_key,
+            "attachment": None,
         }
-        for msg, user in messages
-    ]
+        if msg.attachment_id:
+            att = session.get(Attachment, msg.attachment_id)
+            if att:
+                entry["attachment"] = {
+                    "id": att.id,
+                    "original_filename": att.original_filename,
+                    "mime_type": att.mime_type,
+                    "file_size": att.file_size,
+                    "encryption_nonce": att.encryption_nonce,
+                    "file_key_encrypted": att.file_key_encrypted,
+                    "file_key_nonce": att.file_key_nonce,
+                    "sender_file_key_encrypted": att.sender_file_key_encrypted,
+                    "sender_file_key_nonce": att.sender_file_key_nonce,
+                }
+        results.append(entry)
     return results
 
 # Users
-@router.post("/users")
-async def create_user(user: UserCreate):
-    # logic to create user
-    return {"detail": "User created"}
+###Marked for removal
+# @router.post("/users")
+# async def create_user(user: UserCreate):
+#     return {"detail": "User created"}
 
 @router.delete("/users/{user_id}")
 async def delete_user(
@@ -327,7 +363,6 @@ def get_available_permissions():
         "KICK_MEMBERS",
         "BAN_MEMBERS",
         "DELETE_MESSAGES",
-        # Add more as needed
     ]
 
 # Roles
@@ -372,7 +407,7 @@ def create_role(
 def update_role(
     server_id: int,
     role_id: int,
-    updated_data: RoleCreate = Body(...),  # Reuse your RoleCreate schema
+    updated_data: RoleCreate = Body(...),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
@@ -555,6 +590,9 @@ def get_user_roles(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
+    if is_banned_from_server(current_user.id, server_id, session):
+        raise HTTPException(status_code=403, detail="You are banned from this server")
+    
     # Ensure current_user is a member of the server
     current_user_membership = session.exec(
         select(ServerMembership).where(
@@ -576,9 +614,6 @@ def get_user_roles(
 
     if not target_user_membership:
         raise HTTPException(status_code=404, detail="User is not a member of this server")
-
-    if is_banned_from_server(current_user.id, server_id, session):
-        raise HTTPException(status_code=403, detail="You are banned from this server")
 
     # Fetch roles assigned to the user
     role_ids = session.exec(
@@ -936,16 +971,6 @@ async def kick_from_server(
 
     session.delete(membership)
 
-    # Optionally delete roles as well
-    roles = session.exec(
-        select(ServerMembershipRole).where(
-            (ServerMembershipRole.server_id == server_id) &
-            (ServerMembershipRole.user_id == user_id)
-        )
-    ).all()
-    for role in roles:
-        session.delete(role)
-
     session.commit()
     return {"detail": "User kicked from server"}
 
@@ -1098,7 +1123,7 @@ async def send_friend_request(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Send a friend request by username."""
+    #Send a friend request by username.
     friend = session.exec(select(User).where(User.username == body.friend_username)).first()
     if not friend:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1129,7 +1154,7 @@ async def send_friend_request(
             existing.status = "pending"
             existing.user_id = current_user.id
             existing.friend_id = friend.id
-            existing.created_at = datetime.utcnow()
+            existing.created_at = datetime.now(timezone.utc)
             session.add(existing)
             session.commit()
             return {"detail": "Friend request sent"}
@@ -1153,7 +1178,7 @@ async def accept_friend_request(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Accept an incoming friend request."""
+    #Accept an incoming friend request.
     friendship = session.get(Friendship, friendship_id)
     if not friendship:
         raise HTTPException(status_code=404, detail="Friend request not found")
@@ -1181,7 +1206,7 @@ async def reject_friend_request(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Reject an incoming friend request."""
+    #Reject an incoming friend request.
     friendship = session.get(Friendship, friendship_id)
     if not friendship:
         raise HTTPException(status_code=404, detail="Friend request not found")
@@ -1202,7 +1227,7 @@ async def remove_friend(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Remove an accepted friend."""
+    #Remove an accepted friend.
     friendship = session.exec(
         select(Friendship).where(
             (
@@ -1225,7 +1250,7 @@ async def list_friends(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """List all accepted friends."""
+    #List all accepted friends.
     friendships = session.exec(
         select(Friendship).where(
             (
@@ -1261,7 +1286,7 @@ async def list_friend_requests(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """List incoming pending friend requests."""
+    #List incoming pending friend requests.
     friendships = session.exec(
         select(Friendship).where(
             (Friendship.friend_id == current_user.id) &
@@ -1293,7 +1318,7 @@ async def list_outgoing_requests(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """List outgoing pending friend requests."""
+    #List outgoing pending friend requests.
     friendships = session.exec(
         select(Friendship).where(
             (Friendship.user_id == current_user.id) &
@@ -1328,7 +1353,7 @@ async def create_or_get_conversation(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Create or get a 1-on-1 conversation with a friend."""
+    #Create or get a 1-on-1 conversation with a friend.
     # Verify friendship
     friendship = session.exec(
         select(Friendship).where(
@@ -1402,7 +1427,7 @@ async def list_conversations(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """List all conversations for the current user."""
+    #List all conversations for the current user.
     my_member_rows = session.exec(
         select(ConversationMember).where(ConversationMember.user_id == current_user.id)
     ).all()
@@ -1429,13 +1454,13 @@ async def list_conversations(
     return result
 
 
-@router.get("/conversations/{conversation_id}/messages", response_model=List[DirectMessageRead])
+@router.get("/conversations/{conversation_id}/messages")
 async def get_conversation_messages(
     conversation_id: int,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Get messages in a conversation."""
+    #Get messages in a conversation.
     # Verify membership
     membership = session.exec(
         select(ConversationMember).where(
@@ -1455,17 +1480,33 @@ async def get_conversation_messages(
     result = []
     for msg in messages:
         user = session.get(User, msg.user_id)
-        result.append(DirectMessageRead(
-            id=msg.id,
-            conversation_id=msg.conversation_id,
-            user_id=msg.user_id,
-            username=user.username if user else "Unknown",
-            content=msg.content,
-            is_encrypted=msg.is_encrypted,
-            nonce=msg.nonce,
-            sender_public_key=msg.sender_public_key,
-            created_at=msg.created_at,
-        ))
+        entry = {
+            "id": msg.id,
+            "conversation_id": msg.conversation_id,
+            "user_id": msg.user_id,
+            "username": user.username if user else "Unknown",
+            "content": msg.content,
+            "is_encrypted": msg.is_encrypted,
+            "nonce": msg.nonce,
+            "sender_public_key": msg.sender_public_key,
+            "created_at": msg.created_at.isoformat(),
+            "attachment": None,
+        }
+        if msg.attachment_id:
+            att = session.get(Attachment, msg.attachment_id)
+            if att:
+                entry["attachment"] = {
+                    "id": att.id,
+                    "original_filename": att.original_filename,
+                    "mime_type": att.mime_type,
+                    "file_size": att.file_size,
+                    "encryption_nonce": att.encryption_nonce,
+                    "file_key_encrypted": att.file_key_encrypted,
+                    "file_key_nonce": att.file_key_nonce,
+                    "sender_file_key_encrypted": att.sender_file_key_encrypted,
+                    "sender_file_key_nonce": att.sender_file_key_nonce,
+                }
+        result.append(entry)
     return result
 
 
@@ -1476,7 +1517,7 @@ async def send_dm(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Send a message in a conversation."""
+    #Send a message in a conversation.
     # Verify membership
     membership = session.exec(
         select(ConversationMember).where(
@@ -1487,6 +1528,24 @@ async def send_dm(
     if not membership:
         raise HTTPException(status_code=403, detail="Not a member of this conversation")
 
+    # Validate attachment if provided
+    attachment_data = None
+    if body.attachment_id:
+        att = session.get(Attachment, body.attachment_id)
+        if not att or att.conversation_id != conversation_id or att.uploader_id != current_user.id:
+            raise HTTPException(status_code=400, detail="Invalid attachment")
+        attachment_data = {
+            "id": att.id,
+            "original_filename": att.original_filename,
+            "mime_type": att.mime_type,
+            "file_size": att.file_size,
+            "encryption_nonce": att.encryption_nonce,
+            "file_key_encrypted": att.file_key_encrypted,
+            "file_key_nonce": att.file_key_nonce,
+            "sender_file_key_encrypted": att.sender_file_key_encrypted,
+            "sender_file_key_nonce": att.sender_file_key_nonce,
+        }
+
     dm = DirectMessage(
         conversation_id=conversation_id,
         user_id=current_user.id,
@@ -1494,6 +1553,7 @@ async def send_dm(
         is_encrypted=body.is_encrypted,
         nonce=body.nonce,
         sender_public_key=body.sender_public_key,
+        attachment_id=body.attachment_id,
     )
     session.add(dm)
     session.commit()
@@ -1532,6 +1592,7 @@ async def send_dm(
                     "nonce": dm.nonce,
                     "sender_public_key": dm.sender_public_key,
                     "created_at": dm.created_at.isoformat(),
+                    "attachment": attachment_data,
                 },
             })
 
@@ -1546,7 +1607,7 @@ async def edit_dm(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Edit a DM message."""
+    #Edit a DM message.
     msg = session.get(DirectMessage, message_id)
     if not msg or msg.conversation_id != conversation_id:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -1570,6 +1631,9 @@ async def edit_dm(
                 "conversation_id": conversation_id,
                 "message_id": message_id,
                 "content": body.content,
+                "is_encrypted": msg.is_encrypted,
+                "nonce": msg.nonce,
+                "sender_public_key": msg.sender_public_key,
             })
 
     return {"detail": "Message updated"}
@@ -1582,7 +1646,7 @@ async def delete_dm(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Delete a DM message."""
+    #Delete a DM message.
     msg = session.get(DirectMessage, message_id)
     if not msg or msg.conversation_id != conversation_id:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -1616,7 +1680,7 @@ async def sync_dm_messages(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Get DM messages after a given ID for reconnection sync."""
+    #Get DM messages after a given ID for reconnection sync.
     membership = session.exec(
         select(ConversationMember).where(
             ConversationMember.conversation_id == conversation_id,
@@ -1636,7 +1700,7 @@ async def sync_dm_messages(
     result = []
     for msg in messages:
         user = session.get(User, msg.user_id)
-        result.append({
+        entry = {
             "id": msg.id,
             "conversation_id": msg.conversation_id,
             "user_id": msg.user_id,
@@ -1646,7 +1710,23 @@ async def sync_dm_messages(
             "nonce": msg.nonce,
             "sender_public_key": msg.sender_public_key,
             "created_at": msg.created_at.isoformat(),
-        })
+            "attachment": None,
+        }
+        if msg.attachment_id:
+            att = session.get(Attachment, msg.attachment_id)
+            if att:
+                entry["attachment"] = {
+                    "id": att.id,
+                    "original_filename": att.original_filename,
+                    "mime_type": att.mime_type,
+                    "file_size": att.file_size,
+                    "encryption_nonce": att.encryption_nonce,
+                    "file_key_encrypted": att.file_key_encrypted,
+                    "file_key_nonce": att.file_key_nonce,
+                    "sender_file_key_encrypted": att.sender_file_key_encrypted,
+                    "sender_file_key_nonce": att.sender_file_key_nonce,
+                }
+        result.append(entry)
     return result
 
 # ─── Encryption Key Management ──────────────────────────────────────
@@ -1657,7 +1737,7 @@ async def upload_public_key(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Upload or update the current user's public key."""
+    #Upload or update the current user's public key.
     current_user.public_key = body.public_key
     session.add(current_user)
     session.commit()
@@ -1670,7 +1750,7 @@ async def get_public_key(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Get a user's public key."""
+    #Get a user's public key.
     user = session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1685,7 +1765,7 @@ async def get_public_key(
 async def get_my_public_key(
     current_user: User = Depends(get_current_user),
 ):
-    """Get the current user's public key."""
+    #Get the current user's public key.
     return [PublicKeyRead(
         user_id=current_user.id,
         username=current_user.username,
@@ -1699,7 +1779,7 @@ async def get_server_key(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Get the encrypted server key for the current user."""
+    #Get the encrypted server key for the current user.
     membership = session.exec(
         select(ServerMembership).where(
             ServerMembership.server_id == server_id,
@@ -1736,7 +1816,7 @@ async def upload_server_keys(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Upload encrypted server keys for members. Any member who has the key can redistribute."""
+    #Upload encrypted server keys for members. Any member who has the key can redistribute.
     server = session.get(Server, body.server_id)
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -1794,7 +1874,7 @@ async def get_server_member_public_keys(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Get public keys for all members of a server. Used by the owner to distribute server keys."""
+    #Get public keys for all members of a server. Used by the owner to distribute server keys.
     server = session.get(Server, server_id)
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -1902,7 +1982,7 @@ def login(user: LoginRequest, session: Session = Depends(get_session)):
 
 @router.post("/auth/logout")
 def logout(token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
-    """Blacklist the current access token so it can no longer be used."""
+    #Blacklist the current access token so it can no longer be used.
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         exp = datetime.utcfromtimestamp(payload.get("exp", 0))
@@ -1918,7 +1998,7 @@ def logout(token: str = Depends(oauth2_scheme), session: Session = Depends(get_s
 
 @router.post("/auth/refresh")
 def refresh_token(body: dict = Body(...), session: Session = Depends(get_session)):
-    """Exchange a valid refresh token for a new access token."""
+    #Exchange a valid refresh token for a new access token.
     refresh = body.get("refresh_token")
     if not refresh:
         raise HTTPException(status_code=400, detail="Refresh token is required")
@@ -2149,7 +2229,7 @@ async def sync_messages(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Return messages in a server that were sent after the given message ID."""
+    #Return messages in a server that were sent after the given message ID.
     membership = session.exec(
         select(ServerMembership).where(
             ServerMembership.server_id == server_id,
@@ -2175,8 +2255,9 @@ async def sync_messages(
         .order_by(Message.id)
     ).all()
 
-    results = [
-        {
+    results = []
+    for msg, user in messages:
+        entry = {
             "id": msg.id,
             "content": msg.content,
             "user_id": msg.user_id,
@@ -2186,14 +2267,235 @@ async def sync_messages(
             "is_encrypted": msg.is_encrypted,
             "nonce": msg.nonce,
             "sender_public_key": msg.sender_public_key,
+            "attachment": None,
         }
-        for msg, user in messages
-    ]
+        if msg.attachment_id:
+            att = session.get(Attachment, msg.attachment_id)
+            if att:
+                entry["attachment"] = {
+                    "id": att.id,
+                    "original_filename": att.original_filename,
+                    "mime_type": att.mime_type,
+                    "file_size": att.file_size,
+                    "encryption_nonce": att.encryption_nonce,
+                    "file_key_encrypted": att.file_key_encrypted,
+                    "file_key_nonce": att.file_key_nonce,
+                    "sender_file_key_encrypted": att.sender_file_key_encrypted,
+                    "sender_file_key_nonce": att.sender_file_key_nonce,
+                }
+        results.append(entry)
     return results
 
 
+# ─── File Attachments ────────────────────────────────────────────
+
+@router.post("/attachments/upload", response_model=AttachmentRead)
+async def upload_attachment(
+    file: UploadFile = File(...),
+    server_id: Optional[int] = Form(None),
+    conversation_id: Optional[int] = Form(None),
+    original_filename: str = Form(...),
+    mime_type: str = Form(...),
+    file_size: int = Form(...),
+    encryption_nonce: str = Form(...),
+    file_key_encrypted: Optional[str] = Form(None),
+    file_key_nonce: Optional[str] = Form(None),
+    sender_file_key_encrypted: Optional[str] = Form(None),
+    sender_file_key_nonce: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    #Upload an encrypted file attachment. The file bytes must already be encrypted client-side.
+    # Must target either a server or a DM conversation
+    if not server_id and not conversation_id:
+        raise HTTPException(status_code=400, detail="Must provide server_id or conversation_id")
+
+    # Validate file extension
+    _, ext = os.path.splitext(original_filename)
+    if ext.lower() in BLOCKED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"File type {ext} is not allowed")
+
+    # Validate file size
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 10MB")
+
+    # Check access
+    if server_id:
+        membership = session.exec(
+            select(ServerMembership).where(
+                ServerMembership.server_id == server_id,
+                ServerMembership.user_id == current_user.id
+            )
+        ).first()
+        if not membership:
+            raise HTTPException(status_code=403, detail="You are not a member of this server")
+        if is_banned_from_server(current_user.id, server_id, session):
+            raise HTTPException(status_code=403, detail="You are banned from this server")
+
+    if conversation_id:
+        conv_member = session.exec(
+            select(ConversationMember).where(
+                ConversationMember.conversation_id == conversation_id,
+                ConversationMember.user_id == current_user.id
+            )
+        ).first()
+        if not conv_member:
+            raise HTTPException(status_code=403, detail="Not a member of this conversation")
+
+    # Read and save encrypted file bytes
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE + 1024:  # small overhead for encryption padding
+        raise HTTPException(status_code=400, detail="File too large")
+
+    filename = f"{uuid4().hex}.enc"
+    file_path = os.path.join(ATTACHMENTS_DIR, filename)
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    # Create attachment record
+    attachment = Attachment(
+        server_id=server_id,
+        conversation_id=conversation_id,
+        uploader_id=current_user.id,
+        file_path=file_path,
+        original_filename=original_filename,
+        mime_type=mime_type,
+        file_size=file_size,
+        encryption_nonce=encryption_nonce,
+        file_key_encrypted=file_key_encrypted,
+        file_key_nonce=file_key_nonce,
+        sender_file_key_encrypted=sender_file_key_encrypted,
+        sender_file_key_nonce=sender_file_key_nonce,
+    )
+    session.add(attachment)
+    session.commit()
+    session.refresh(attachment)
+
+    return AttachmentRead(
+        id=attachment.id,
+        original_filename=attachment.original_filename,
+        mime_type=attachment.mime_type,
+        file_size=attachment.file_size,
+        encryption_nonce=attachment.encryption_nonce,
+        file_key_encrypted=attachment.file_key_encrypted,
+        file_key_nonce=attachment.file_key_nonce,
+        sender_file_key_encrypted=attachment.sender_file_key_encrypted,
+        sender_file_key_nonce=attachment.sender_file_key_nonce,
+        uploader_id=attachment.uploader_id,
+        created_at=attachment.created_at,
+    )
+
+
+@router.get("/attachments/{attachment_id}")
+async def download_attachment(
+    attachment_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    #Download an encrypted file attachment. Returns raw encrypted bytes with metadata headers.
+    attachment = session.get(Attachment, attachment_id)
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Check access: server membership or conversation membership
+    if attachment.server_id:
+        membership = session.exec(
+            select(ServerMembership).where(
+                ServerMembership.server_id == attachment.server_id,
+                ServerMembership.user_id == current_user.id
+            )
+        ).first()
+        if not membership:
+            raise HTTPException(status_code=403, detail="You do not have access to this file")
+        if is_banned_from_server(current_user.id, attachment.server_id, session):
+            raise HTTPException(status_code=403, detail="You are banned from this server")
+
+    elif attachment.conversation_id:
+        conv_member = session.exec(
+            select(ConversationMember).where(
+                ConversationMember.conversation_id == attachment.conversation_id,
+                ConversationMember.user_id == current_user.id
+            )
+        ).first()
+        if not conv_member:
+            raise HTTPException(status_code=403, detail="You do not have access to this file")
+
+    # Read encrypted file from disk
+    if not os.path.exists(attachment.file_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    with open(attachment.file_path, "rb") as f:
+        encrypted_bytes = f.read()
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{attachment.original_filename}"',
+        "X-Original-Filename": attachment.original_filename,
+        "X-Mime-Type": attachment.mime_type,
+        "X-File-Size": str(attachment.file_size),
+        "X-Encryption-Nonce": attachment.encryption_nonce,
+        "Access-Control-Expose-Headers": "X-Original-Filename, X-Mime-Type, X-File-Size, X-Encryption-Nonce, X-File-Key-Encrypted, X-File-Key-Nonce",
+    }
+    if attachment.file_key_encrypted:
+        headers["X-File-Key-Encrypted"] = attachment.file_key_encrypted
+    if attachment.file_key_nonce:
+        headers["X-File-Key-Nonce"] = attachment.file_key_nonce
+
+    return Response(
+        content=encrypted_bytes,
+        media_type="application/octet-stream",
+        headers=headers,
+    )
+
+
+@router.get("/attachments/{attachment_id}/meta", response_model=AttachmentRead)
+async def get_attachment_meta(
+    attachment_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    #Get attachment metadata without downloading the file.
+    attachment = session.get(Attachment, attachment_id)
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Check access
+    if attachment.server_id:
+        membership = session.exec(
+            select(ServerMembership).where(
+                ServerMembership.server_id == attachment.server_id,
+                ServerMembership.user_id == current_user.id
+            )
+        ).first()
+        if not membership:
+            raise HTTPException(status_code=403, detail="No access")
+
+    elif attachment.conversation_id:
+        conv_member = session.exec(
+            select(ConversationMember).where(
+                ConversationMember.conversation_id == attachment.conversation_id,
+                ConversationMember.user_id == current_user.id
+            )
+        ).first()
+        if not conv_member:
+            raise HTTPException(status_code=403, detail="No access")
+
+    return AttachmentRead(
+        id=attachment.id,
+        original_filename=attachment.original_filename,
+        mime_type=attachment.mime_type,
+        file_size=attachment.file_size,
+        encryption_nonce=attachment.encryption_nonce,
+        file_key_encrypted=attachment.file_key_encrypted,
+        file_key_nonce=attachment.file_key_nonce,
+        sender_file_key_encrypted=attachment.sender_file_key_encrypted,
+        sender_file_key_nonce=attachment.sender_file_key_nonce,
+        uploader_id=attachment.uploader_id,
+        created_at=attachment.created_at,
+    )
+
+
 def authenticate_ws_token(token: str, session: Session):
-    """Validate a JWT token for WebSocket connections. Returns the User or None."""
+    #Validate a JWT token for WebSocket connections. Returns the User or None.
     if is_token_blacklisted(token, session):
         return None
     try:
@@ -2209,28 +2511,86 @@ def authenticate_ws_token(token: str, session: Session):
     return session.get(User, user_id)
 
 
+# ─── Voice Channels ──────────────────────────────────────────────
+
+@router.get("/servers/{server_id}/voice-channels", response_model=List[VoiceChannelRead])
+async def list_voice_channels(server_id: int, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+    #List all voice channels for a server, including currently connected users.
+    membership = session.exec(
+        select(ServerMembership).where(ServerMembership.server_id == server_id, ServerMembership.user_id == current_user.id)
+    ).first()
+    if not membership:
+        raise HTTPException(403, "Not a member of this server")
+
+    channels = session.exec(select(VoiceChannel).where(VoiceChannel.server_id == server_id).order_by(VoiceChannel.position)).all()
+    result = []
+    for ch in channels:
+        connected_ids = manager.get_voice_channel_users(ch.id)
+        connected_users = []
+        for uid in connected_ids:
+            user = session.get(User, uid)
+            if user:
+                connected_users.append(PublicUserRead(id=user.id, username=user.username, icon_url=user.icon_url))
+        result.append(VoiceChannelRead(
+            id=ch.id, server_id=ch.server_id, name=ch.name,
+            position=ch.position, user_limit=ch.user_limit,
+            connected_users=connected_users,
+        ))
+    return result
+
+@router.post("/servers/{server_id}/voice-channels", response_model=VoiceChannelRead)
+async def create_voice_channel(server_id: int, data: VoiceChannelCreate, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+    #Create a new voice channel (owner or MANAGE_CHANNELS permission).
+    if not (is_server_owner(current_user, server_id, session) or has_permission(current_user, server_id, "MANAGE_CHANNELS", session)):
+        raise HTTPException(403, "You don't have permission to manage channels")
+
+    # Get max position
+    existing = session.exec(select(VoiceChannel).where(VoiceChannel.server_id == server_id)).all()
+    max_pos = max((ch.position for ch in existing), default=-1)
+
+    channel = VoiceChannel(server_id=server_id, name=data.name, user_limit=data.user_limit, position=max_pos + 1)
+    session.add(channel)
+    session.commit()
+    session.refresh(channel)
+    return VoiceChannelRead(
+        id=channel.id, server_id=channel.server_id, name=channel.name,
+        position=channel.position, user_limit=channel.user_limit,
+        connected_users=[],
+    )
+
+@router.delete("/voice-channels/{channel_id}", status_code=200)
+async def delete_voice_channel(channel_id: int, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+    #Delete a voice channel (owner or MANAGE_CHANNELS permission).
+    channel = session.get(VoiceChannel, channel_id)
+    if not channel:
+        raise HTTPException(404, "Voice channel not found")
+    if not (is_server_owner(current_user, channel.server_id, session) or has_permission(current_user, channel.server_id, "MANAGE_CHANNELS", session)):
+        raise HTTPException(403, "You don't have permission to manage channels")
+    session.delete(channel)
+    session.commit()
+    return {"detail": "Voice channel deleted"}
+
+
 # NOTE: /ws/dm MUST be defined BEFORE /ws/{server_id} so FastAPI doesn't
 # try to parse "dm" as an integer server_id.
 @router.websocket("/ws/dm")
 async def dm_websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket endpoint for DM notifications and typing indicators.
-    Not tied to a specific server - receives all DM-related events.
+    #WebSocket endpoint for DM notifications and typing indicators.
+    #Not tied to a specific server - receives all DM-related events.
 
-    Client sends:
-      - {"type": "auth", "token": "<jwt>"}  (must be first message)
-      - {"type": "dm_typing", "conversation_id": <int>}
-      - {"type": "dm_stop_typing", "conversation_id": <int>}
+    #Client sends:
+    #  - {"type": "auth", "token": "<jwt>"}  (must be first message)
+    #  - {"type": "dm_typing", "conversation_id": <int>}
+    #  - {"type": "dm_stop_typing", "conversation_id": <int>}
 
-    Server sends:
-      - {"type": "dm_new_message", "conversation_id": <int>, "message": {...}}
-      - {"type": "dm_message_edited", "conversation_id": <int>, ...}
-      - {"type": "dm_message_deleted", "conversation_id": <int>, ...}
-      - {"type": "dm_typing", "conversation_id": <int>, "user_id": <int>, "username": "<str>"}
-      - {"type": "dm_stop_typing", "conversation_id": <int>, "user_id": <int>}
-      - {"type": "friend_request", "from_user": {...}}
-      - {"type": "friend_accepted", "friend": {...}}
-    """
+    #Server sends:
+    #  - {"type": "dm_new_message", "conversation_id": <int>, "message": {...}}
+    #  - {"type": "dm_message_edited", "conversation_id": <int>, ...}
+    #  - {"type": "dm_message_deleted", "conversation_id": <int>, ...}
+    #  - {"type": "dm_typing", "conversation_id": <int>, "user_id": <int>, "username": "<str>"}
+    #  - {"type": "dm_stop_typing", "conversation_id": <int>, "user_id": <int>}
+    #  - {"type": "friend_request", "from_user": {...}}
+    #  - {"type": "friend_accepted", "friend": {...}}
     await websocket.accept()
 
     # Wait for authentication message
@@ -2308,6 +2668,16 @@ async def dm_websocket_endpoint(websocket: WebSocket):
                                     "user_id": user_id,
                                 })
 
+            # ─── Call signaling relay ─────────────────────────
+            elif msg_type in ("call_offer", "call_answer", "call_ice_candidate", "call_reject", "call_hangup"):
+                to_user_id = data.get("to_user_id")
+                if to_user_id is not None:
+                    # Relay the message with sender info attached
+                    relay_msg = {k: v for k, v in data.items() if k != "to_user_id"}
+                    relay_msg["from_user_id"] = user_id
+                    relay_msg["from_username"] = username
+                    await manager.send_to_user(to_user_id, relay_msg)
+
     except WebSocketDisconnect:
         manager.disconnect_dm(websocket, user_id)
     except Exception:
@@ -2316,24 +2686,22 @@ async def dm_websocket_endpoint(websocket: WebSocket):
 
 @router.websocket("/ws/{server_id}")
 async def websocket_endpoint(websocket: WebSocket, server_id: int):
-    """
-    WebSocket endpoint for real-time messaging per server.
+    #WebSocket endpoint for real-time messaging per server.
 
-    Client sends JSON messages with a "type" field:
-      - {"type": "auth", "token": "<jwt>"}  (must be first message)
-      - {"type": "typing"}
-      - {"type": "stop_typing"}
-      - {"type": "ack", "message_id": <int>}
+    #Client sends JSON messages with a "type" field:
+    #  - {"type": "auth", "token": "<jwt>"}  (must be first message)
+    #  - {"type": "typing"}
+    #  - {"type": "stop_typing"}
+    #  - {"type": "ack", "message_id": <int>}
 
-    Server sends JSON messages:
-      - {"type": "new_message", "message": {...}}
-      - {"type": "message_edited", "message_id": <int>, "content": "<str>"}
-      - {"type": "message_deleted", "message_id": <int>}
-      - {"type": "typing", "user_id": <int>, "username": "<str>"}
-      - {"type": "stop_typing", "user_id": <int>}
-      - {"type": "delivery_ack", "message_id": <int>, "status": "delivered"}
-      - {"type": "error", "detail": "<str>"}
-    """
+    #Server sends JSON messages:
+    #  - {"type": "new_message", "message": {...}}
+    #  - {"type": "message_edited", "message_id": <int>, "content": "<str>"}
+    #  - {"type": "message_deleted", "message_id": <int>}
+    #  - {"type": "typing", "user_id": <int>, "username": "<str>"}
+    #  - {"type": "stop_typing", "user_id": <int>}
+    #  - {"type": "delivery_ack", "message_id": <int>, "status": "delivered"}
+    #  - {"type": "error", "detail": "<str>"}
     # Accept the WebSocket connection first, then wait for auth
     await websocket.accept()
 
@@ -2427,7 +2795,73 @@ async def websocket_endpoint(websocket: WebSocket, server_id: int):
                         "status": "delivered",
                     })
 
+            # ─── Voice channel signaling ──────────────────────
+            elif msg_type == "voice_join":
+                channel_id = data.get("channel_id")
+                if channel_id is not None:
+                    with Session(engine) as session:
+                        channel = session.get(VoiceChannel, channel_id)
+                        if not channel or channel.server_id != server_id:
+                            await websocket.send_json({"type": "error", "detail": "Invalid voice channel"})
+                            continue
+                        current_users = manager.get_voice_channel_users(channel_id)
+                        if channel.user_limit > 0 and len(current_users) >= channel.user_limit:
+                            await websocket.send_json({"type": "error", "detail": "Voice channel is full"})
+                            continue
+
+                    # Leave any previous voice channel (auto-move)
+                    old_channel = manager.join_voice_channel(channel_id, user_id)
+                    if old_channel is not None:
+                        await manager.broadcast_to_server(server_id, {
+                            "type": "voice_user_left", "channel_id": old_channel,
+                            "user_id": user_id, "username": username,
+                        })
+
+                    # Broadcast join to all server members
+                    await manager.broadcast_to_server(server_id, {
+                        "type": "voice_user_joined", "channel_id": channel_id,
+                        "user_id": user_id, "username": username,
+                    })
+
+                    # Send the list of existing users in the channel to the joining user
+                    users_in_channel = manager.get_voice_channel_users(channel_id)
+                    user_list = []
+                    with Session(engine) as session:
+                        for uid in users_in_channel:
+                            if uid != user_id:
+                                u = session.get(User, uid)
+                                if u:
+                                    user_list.append({"id": u.id, "username": u.username})
+                    await websocket.send_json({
+                        "type": "voice_channel_users", "channel_id": channel_id,
+                        "users": user_list,
+                    })
+
+            elif msg_type == "voice_leave":
+                channel_id = data.get("channel_id")
+                if channel_id is not None:
+                    manager.leave_voice_channel(channel_id, user_id)
+                    await manager.broadcast_to_server(server_id, {
+                        "type": "voice_user_left", "channel_id": channel_id,
+                        "user_id": user_id, "username": username,
+                    })
+
+            elif msg_type in ("voice_offer", "voice_answer", "voice_ice_candidate"):
+                to_user_id = data.get("to_user_id")
+                channel_id = data.get("channel_id")
+                if to_user_id is not None and channel_id is not None:
+                    relay_msg = {k: v for k, v in data.items() if k != "to_user_id"}
+                    relay_msg["from_user_id"] = user_id
+                    await manager.send_to_user_in_server(server_id, to_user_id, relay_msg)
+
     except WebSocketDisconnect:
+        # Clean up voice channel on disconnect
+        left_channel = manager.leave_all_voice_channels(user_id)
+        if left_channel is not None:
+            await manager.broadcast_to_server(server_id, {
+                "type": "voice_user_left", "channel_id": left_channel,
+                "user_id": user_id, "username": username,
+            })
         manager.disconnect(websocket, server_id, user_id)
         # Notify others that user stopped typing on disconnect
         await manager.broadcast_to_server(server_id, {
@@ -2435,4 +2869,5 @@ async def websocket_endpoint(websocket: WebSocket, server_id: int):
             "user_id": user_id,
         })
     except Exception:
+        manager.leave_all_voice_channels(user_id)
         manager.disconnect(websocket, server_id, user_id)

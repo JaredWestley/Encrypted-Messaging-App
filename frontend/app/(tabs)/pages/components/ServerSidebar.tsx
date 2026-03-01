@@ -3,9 +3,8 @@ import { YStack, XStack, Text, Button, ScrollView, Input, Card, Separator } from
 import { TouchableOpacity, Modal, Alert as RNAlert, Image, useWindowDimensions } from "react-native";
 import { Plus, Settings, X, Users, MessageCircle } from "@tamagui/lucide-icons";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { createServer, fetchServers, joinServerWithInvite, fetchConversations, ConversationData } from "../../utils/api";
-import { useAuth } from "../../utils/AuthContext";
-import { BASE_URL } from "../../utils/config";
+import { createServer, fetchServers, joinServerWithInvite, fetchConversations, ConversationData } from "../../../../utils/api";
+import { BASE_URL } from "../../../../utils/config";
 import UserSettingsDialog from "./UserSettingsDialog";
 
 interface Server {
@@ -52,11 +51,9 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
   selectedConversationId,
   onSelectConversation,
   conversations,
-  onConversationsChanged,
   userId,
   incomingRequestsCount = 0,
   outgoingRequestsCount = 0,
-  unreadDmCount = 0,
   unreadConversations = new Set(),
   unreadServers = new Set(),
   onOpenFriends,
@@ -192,6 +189,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
 
         <ScrollView
           flex={1}
+          borderColor={"red"}
           marginBottom={isMobile ? 0 : 80}
           contentContainerStyle={{
             paddingHorizontal: isMobile ? 16 : 0,
@@ -351,7 +349,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                           width={56}
                           height={56}
                           borderRadius={isSelected ? 16 : 28}
-                          backgroundColor={isSelected ? "#5865F2" : "#7289da"}
+                          backgroundColor={isSelected ? "#5865F2" : "#2f3136"}
                           justifyContent="center"
                           alignItems="center"
                           hoverStyle={{ borderRadius: 16 }}
@@ -392,7 +390,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
             <YStack alignItems="center" paddingHorizontal={isMobile ? "$0" : "$0"}>
               <Button
                 circular={!isMobile}
-                size={isMobile ? "$4" : "$6"}
+                size={isMobile ? "$4" : "$5"}
                 width={isMobile ? "100%" : undefined}
                 backgroundColor="#5865F2"
                 onPress={() => setModalVisible(true)}
@@ -730,4 +728,4 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
   );
 };
 
-export default ServerSidebar;
+export default React.memo(ServerSidebar);

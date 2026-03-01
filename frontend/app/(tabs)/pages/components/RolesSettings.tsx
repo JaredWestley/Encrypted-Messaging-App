@@ -11,7 +11,7 @@ import {
   fetchPermissions,
   assignRole,
   unassignRole,
-} from "../../utils/api";
+} from "../../../../utils/api";
 
 const PERMISSION_LABELS: Record<string, string> = {
   VIEW_CHANNEL: "View Channel",
@@ -228,9 +228,34 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
       <Text fontSize="$5" fontWeight="700" color="white" marginBottom="$2">
         Roles ({roles.length})
       </Text>
+      <YStack marginTop="$2" marginBottom="$2" gap="$2">
+        <Input
+          placeholder="New role name"
+          //@ts-ignore
+          placeholderTextColor="#72767d"
+          value={newRoleName}
+          onChangeText={setNewRoleName}
+          backgroundColor="#40444b"
+          borderWidth={0}
+          color="white"
+          fontSize="$3"
+        />
+        <Button
+          backgroundColor="#5865F2"
+          onPress={createRole}
+          disabled={saving || !newRoleName.trim()}
+          disabledStyle={{ opacity: 0.5 }}
+          size="$3"
+          pressStyle={{ backgroundColor: "#4752C4" }}
+        >
+          Create Role
+        </Button>
+      </YStack>
       <ScrollView flex={1}>
         <YStack gap="$1">
           {roles.map((role) => (
+            <YStack>
+              <Separator backgroundColor="#40444b" marginBottom="$1" marginTop="$1"/>
             <TouchableOpacity key={role.id} onPress={() => setSelectedRoleId(role.id)}>
               <YStack
                 padding="$3"
@@ -248,6 +273,7 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
                 </Text>
               </YStack>
             </TouchableOpacity>
+            </YStack>
           ))}
 
           {roles.length === 0 && (
@@ -259,27 +285,6 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
           )}
         </YStack>
       </ScrollView>
-
-      <YStack marginTop="$2" gap="$2">
-        <Input
-          placeholder="New role name"
-          value={newRoleName}
-          onChangeText={setNewRoleName}
-          backgroundColor="#40444b"
-          borderWidth={0}
-          color="white"
-          fontSize="$3"
-        />
-        <Button
-          backgroundColor="#5865F2"
-          onPress={createRole}
-          disabled={saving || !newRoleName.trim()}
-          disabledStyle={{ opacity: 0.5 }}
-          size="$3"
-        >
-          Create Role
-        </Button>
-      </YStack>
     </YStack>
   );
 
@@ -307,6 +312,9 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
           )}
 
           {/* Role Name + Delete */}
+          <Text fontSize="$4" fontWeight="600" color="white">
+            Role Name
+          </Text>
           <XStack alignItems="center" gap="$2">
             <Input
               flex={1}
@@ -324,6 +332,7 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
               icon={<Trash2 size={18} color="white" />}
               onPress={selectedRole.is_default ? () => RNAlert.alert("Cannot Delete", "The default role cannot be deleted.") : deleteRole}
               disabled={saving || selectedRole.is_default}
+              marginLeft="$2"
             />
           </XStack>
 
@@ -331,7 +340,7 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
 
           {/* Permissions */}
           <YStack gap="$2">
-            <Text fontSize="$4" fontWeight="600" color="white">
+            <Text fontSize="$4" fontWeight="600" color="white" marginBottom="$2">
               Permissions
             </Text>
             <YStack backgroundColor="#202225" padding="$2" borderRadius="$2" gap="$1">
@@ -372,7 +381,7 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
 
           {/* Assigned Users */}
           <YStack gap="$2">
-            <Text fontSize="$4" fontWeight="600" color="white">
+            <Text fontSize="$4" fontWeight="600" color="white" marginBottom="$2">
               Assigned Users
             </Text>
             <YStack backgroundColor="#202225" padding="$2" borderRadius="$2" gap="$1">
@@ -421,6 +430,7 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
             disabled={saving}
             size="$4"
             pressStyle={{ backgroundColor: "#4752C4" }}
+            marginTop="$2"
           >
             {saving ? "Saving..." : "Save Changes"}
           </Button>

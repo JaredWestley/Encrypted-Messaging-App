@@ -1,7 +1,7 @@
 import os
 import re
 from passlib.context import CryptContext
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 from dotenv import load_dotenv
 
@@ -18,21 +18,20 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:
-    """Hash a plaintext password using bcrypt."""
+    #Hash a plaintext password using bcrypt.
     return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a plaintext password against a bcrypt hash."""
+    #Verify a plaintext password against a bcrypt hash.
     return pwd_context.verify(plain_password, hashed_password)
 
 
 # ── Password Strength Validation ─────────────────────────────────────
 def validate_password_strength(password: str) -> tuple[bool, str]:
-    """
-    Validate password meets minimum security requirements.
-    Returns (is_valid, error_message).
-    """
+    #Validate password meets minimum security requirements.
+    #Returns (is_valid, error_message).
+    
     if len(password) < 8:
         return False, "Password must be at least 8 characters long."
     if not re.search(r"[A-Z]", password):
@@ -48,21 +47,21 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
 
 # ── JWT Token Creation ───────────────────────────────────────────────
 def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
-    """Create a short-lived access token with type='access'."""
+    #Create a short-lived access token with type='access'.
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire, "type": "access"})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def create_refresh_token(data: dict) -> str:
-    """Create a long-lived refresh token with type='refresh'."""
+    #Create a long-lived refresh token with type='refresh'.
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     to_encode.update({"exp": expire, "type": "refresh"})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> dict:
-    """Decode and validate a JWT token."""
+    #Decode and validate a JWT token.
     return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])

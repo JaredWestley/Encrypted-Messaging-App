@@ -1,15 +1,22 @@
 {
   "expo": {
-    "name": "frontend2",
-    "slug": "frontend2",
+    "name": "frontend",
+    "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend2",
+    "scheme": "frontend",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow $(PRODUCT_NAME) to access your camera for video calls",
+        "NSMicrophoneUsageDescription": "Allow $(PRODUCT_NAME) to access your microphone for voice and video calls",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "bitcode": false,
+      "bundleIdentifier": "com.anonymous.frontend"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +26,21 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH"
+      ],
+      "package": "com.anonymous.frontend"
     },
     "web": {
       "output": "static",
@@ -39,11 +60,24 @@
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera for video calls",
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone for voice and video calls"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "534d17f4-4050-486c-a485-cf261771c8c6"
+      }
     }
   }
 }

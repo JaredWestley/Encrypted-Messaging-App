@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { YStack, XStack, Text, Button, Input, ScrollView, Card } from "tamagui";
 import { Modal, TouchableOpacity, Alert as RNAlert, useWindowDimensions, Platform } from "react-native";
 import { X } from "@tamagui/lucide-icons";
-import { leaveServer, generateInviteLink, fetchUserRoles } from "../../utils/api";
+import { leaveServer, generateInviteLink, fetchUserRoles } from "../../../../utils/api";
 import RolesSettings from "./RolesSettings";
 import AdminPanel from "./AdminPanel";
 import ServerSettings from "./ServerSettings";
@@ -51,6 +51,14 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
   const [loading, setLoading] = useState(false);
   const [inviteRefreshCounter, setInviteRefreshCounter] = useState(0);
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
+  const [snackbarMessage, setSnackbarMessage] = useState("");
+  const [snackbarVisible, setSnackbarVisible] = useState(false);
+
+  const showSnackbar = (message: string) => {
+    setSnackbarMessage(message);
+    setSnackbarVisible(true);
+    setTimeout(() => setSnackbarVisible(false), 3000);
+  };
 
   // Fetch user's permissions for this server
   useEffect(() => {
@@ -171,7 +179,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
       // Auto-copy to clipboard on generation
       const copied = await copyToClipboard(res.token);
       if (Platform.OS === "web") {
-        window.alert(copied ? "Invite token generated and copied to clipboard!" : "Invite token generated! Copy it manually.");
+        showSnackbar(copied ? "Invite token generated and copied to clipboard!" : "Invite token generated! Copy it manually.");
       } else {
         RNAlert.alert("Success", copied ? "Invite token generated and copied to clipboard!" : "Invite token generated!");
       }
@@ -218,7 +226,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
           {inviteLink && (
             <YStack marginTop="$2">
-              <Text fontSize="$3" color="#b9bbbe" marginBottom="$1">
+              <Text fontSize="$3" color="#b9bbbe" marginBottom="$4">
                 Newly generated invite token:
               </Text>
               <Card backgroundColor="#36393f" padding="$3" borderRadius="$3">
@@ -234,7 +242,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                     onPress={async () => {
                       const copied = await copyToClipboard(inviteLink);
                       if (Platform.OS === "web") {
-                        window.alert(copied ? "Invite token copied to clipboard!" : "Could not copy automatically. Please select and copy the token manually.");
+                        showSnackbar(copied ? "Invite token copied to clipboard!" : "Could not copy automatically. Please select and copy the token manually.");
                       } else {
                         RNAlert.alert(
                           copied ? "Copied" : "Info",
@@ -251,7 +259,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
           )}
 
           <YStack marginTop="$4">
-            <Text fontSize="$5" fontWeight="600" color="white">
+            <Text fontSize="$5" fontWeight="600" color="white" marginBottom="$4">
               Existing Invite Links
             </Text>
             <InviteList
@@ -435,6 +443,25 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
           </XStack>
         )}
       </YStack>
+      {/* Snackbar */}
+      {snackbarVisible && (
+        <Card
+              position="absolute"
+              top={insets.top + 20}
+              alignSelf="center"
+              backgroundColor="#323232"
+              padding={isMobile ? "$4" : "$3"}
+              borderRadius="$4"
+              marginHorizontal="$4"
+              maxWidth={isMobile ? "90%" : 400}
+              shadowColor="black"
+              shadowOffset={{ width: 0, height: 4 }}
+              shadowOpacity={0.3}
+              shadowRadius={8}
+            >
+          <Text color="white" fontSize="$3">{snackbarMessage}</Text>
+        </Card>
+      )}
     </Modal>
   );
 };

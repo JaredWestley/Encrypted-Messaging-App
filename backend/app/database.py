@@ -5,8 +5,8 @@ DATABASE_URL = "sqlite:///./chat.db"
 engine = create_engine(DATABASE_URL, echo=True)
 
 
-def _add_column_if_missing(conn, table: str, column: str, col_type: str, default=None):
-    """Safely add a column to an existing table if it doesn't exist."""
+def add_column_if_missing(conn, table: str, column: str, col_type: str, default=None):
+    #Safely add a column to an existing table if it doesn't exist.
     inspector = inspect(conn)
     existing = [c["name"] for c in inspector.get_columns(table)]
     if column not in existing:
@@ -17,26 +17,34 @@ def _add_column_if_missing(conn, table: str, column: str, col_type: str, default
 def init_db():
     SQLModel.metadata.create_all(engine)
 
-    # Migrate existing tables — add encryption columns
+    # Migrate existing tables
     with engine.connect() as conn:
         # User.public_key
-        _add_column_if_missing(conn, "user", "public_key", "TEXT")
+        add_column_if_missing(conn, "user", "public_key", "TEXT")
 
         # Message encryption fields
-        _add_column_if_missing(conn, "message", "is_encrypted", "BOOLEAN", "0")
-        _add_column_if_missing(conn, "message", "nonce", "TEXT")
-        _add_column_if_missing(conn, "message", "sender_public_key", "TEXT")
+        add_column_if_missing(conn, "message", "is_encrypted", "BOOLEAN", "0")
+        add_column_if_missing(conn, "message", "nonce", "TEXT")
+        add_column_if_missing(conn, "message", "sender_public_key", "TEXT")
 
         # DirectMessage encryption fields
-        _add_column_if_missing(conn, "directmessage", "is_encrypted", "BOOLEAN", "0")
-        _add_column_if_missing(conn, "directmessage", "nonce", "TEXT")
-        _add_column_if_missing(conn, "directmessage", "sender_public_key", "TEXT")
+        add_column_if_missing(conn, "directmessage", "is_encrypted", "BOOLEAN", "0")
+        add_column_if_missing(conn, "directmessage", "nonce", "TEXT")
+        add_column_if_missing(conn, "directmessage", "sender_public_key", "TEXT")
 
         # Role.is_default field
-        _add_column_if_missing(conn, "role", "is_default", "BOOLEAN", "0")
+        add_column_if_missing(conn, "role", "is_default", "BOOLEAN", "0")
 
-        # ServerKey.encrypted_by — tracks who encrypted the key for proper decryption
-        _add_column_if_missing(conn, "serverkey", "encrypted_by", "INTEGER")
+        # ServerKey.encrypted_by — tracks who encrypted the key for decryption
+        add_column_if_missing(conn, "serverkey", "encrypted_by", "INTEGER")
+
+        # Message.attachment_id and DirectMessage.attachment_id — file attachments
+        add_column_if_missing(conn, "message", "attachment_id", "INTEGER")
+        add_column_if_missing(conn, "directmessage", "attachment_id", "INTEGER")
+
+        # Attachment sender self-decryption fields for DM file attachments
+        add_column_if_missing(conn, "attachment", "sender_file_key_encrypted", "TEXT")
+        add_column_if_missing(conn, "attachment", "sender_file_key_nonce", "TEXT")
 
         conn.commit()
 

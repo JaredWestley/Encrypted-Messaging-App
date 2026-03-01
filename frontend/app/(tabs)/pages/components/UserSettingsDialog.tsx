@@ -3,8 +3,8 @@ import { YStack, XStack, Text, Button, Input, Separator, ScrollView } from "tama
 import { Modal, TouchableOpacity, Image, Alert as RNAlert, Platform } from "react-native";
 import { X } from "@tamagui/lucide-icons";
 import * as ImagePicker from "expo-image-picker";
-import { updateUserSettings, fetchCurrentUser, uploadUserIcon } from "../../utils/api";
-import { BASE_URL } from "../../utils/config";
+import { updateUserSettings, fetchCurrentUser, uploadUserIcon } from "../../../../utils/api";
+import { BASE_URL } from "../../../../utils/config";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface UserSettingsDialogProps {
@@ -237,40 +237,42 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
           >
             <YStack paddingTop="$2">
               <YStack>
-                <Text fontWeight="700" color="white" marginBottom="$1">
+                <Text fontWeight="700" color="white" marginBottom="$2">
                   Username:
                 </Text>
-                <Text color="#b9bbbe">{currentUsername || "Not set"}</Text>
+                <Text color="#b9bbbe" marginBottom="$2">{currentUsername || "Not set"}</Text>
               </YStack>
               <Button
                 backgroundColor="transparent"
                 borderWidth={1}
                 borderColor="#5865F2"
                 onPress={() => openChangeDialog("username")}
+                paddingTop={4}
               >
                 Change Username
               </Button>
 
-              <Separator borderColor="#40444b" marginVertical="$2" />
+              <Separator borderColor="#40444b" marginTop="$4"/>
 
               <YStack>
-                <Text fontWeight="700" color="white" marginBottom="$1">
+                <Text fontWeight="700" color="white" marginTop="$3">
                   Email:
                 </Text>
-                <Text color="#b9bbbe">{currentEmail || "Not set"}</Text>
+                <Text color="#b9bbbe" marginTop="$2">{currentEmail || "Not set"}</Text>
               </YStack>
               <Button
                 backgroundColor="transparent"
                 borderWidth={1}
                 borderColor="#5865F2"
                 onPress={() => openChangeDialog("email")}
+                marginTop="$2"
               >
                 Change Email
               </Button>
 
-              <Separator borderColor="#40444b" marginVertical="$2" />
+              <Separator borderColor="#40444b" marginTop="$4"/>
 
-              <Text fontWeight="700" color="white">
+              <Text fontWeight="700" color="white" marginTop="$3">
                 Password
               </Text>
               <Button
@@ -278,13 +280,14 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
                 borderWidth={1}
                 borderColor="#5865F2"
                 onPress={() => openChangeDialog("password")}
+                marginTop="$2"
               >
                 Change Password
               </Button>
 
-              <Separator borderColor="#40444b" marginVertical="$2" />
+              <Separator borderColor="#40444b" marginTop="$4"/>
 
-              <Text fontWeight="700" color="white">
+              <Text fontWeight="700" color="white" marginTop="$3" marginBottom="$2">
                 Profile Icon
               </Text>
               {previewUri ? (
@@ -318,13 +321,14 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
                 </YStack>
               )}
 
-              <XStack>
+              <XStack marginTop="$2">
                 <Button
                   flex={1}
                   backgroundColor="transparent"
                   borderWidth={1}
                   borderColor="#5865F2"
                   onPress={pickImage}
+                  marginRight="$4"
                 >
                   Choose Icon
                 </Button>
@@ -338,7 +342,7 @@ const UserSettingsDialog: React.FC<UserSettingsDialogProps> = ({
                 </Button>
               </XStack>
 
-              <Separator borderColor="#40444b" marginVertical="$2" />
+              <Separator borderColor="#40444b" marginTop="$4" />
 
               <Button backgroundColor="#f04747" onPress={logout} marginTop="$4">
                 Logout

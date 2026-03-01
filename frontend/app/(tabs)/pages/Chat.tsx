@@ -4,11 +4,8 @@ import {
   YStack,
   XStack,
   Text,
-  Input,
-  Button,
   Card,
   Theme,
-  Spinner,
 } from "tamagui";
 import {
   FlatList,
@@ -21,17 +18,8 @@ import {
   useWindowDimensions,
 } from "react-native";
 import {
-  Settings,
-  MoreVertical,
-  Edit3,
-  Trash2,
   Menu,
   X as CloseIcon,
-  Send,
-  Hash,
-  Users,
-  WifiOff,
-  MessageCircle,
 } from "@tamagui/lucide-icons";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ServerSidebar from "./components/ServerSidebar";
@@ -39,6 +27,25 @@ import RightSidebar from "./components/RightSidebar";
 import SettingsDialog from "./components/SettingsDialog";
 import UserProfileDialog from "./components/UserProfileDialog";
 import FriendsList from "./components/FriendsList";
+import IncomingCallModal from "./components/IncomingCallModal";
+import ActiveCallOverlay from "./components/ActiveCallOverlay";
+import VoiceChannelPanel from "./components/VoiceChannelPanel";
+import ChatHeader from "./_chat_components/ChatHeader";
+import ChatInput from "./_chat_components/ChatInput";
+import MessageBubble from "./_chat_components/MessageBubble";
+import MessageOptionsModal from "./_chat_components/MessageOptionsModal";
+import EmptyState from "./_chat_components/EmptyState";
+import TypingIndicator from "./_chat_components/TypingIndicator";
+import SnackbarToast from "./_chat_components/SnackbarToast";
+import { isImageMimeType, formatFileSize } from "./_chat_components/AttachmentImagePreview";
+import type { MessageAttachment, Message, Server, User, ImageDecryptContext } from "./_chat_components/types";
+import { useWebRTC, type CallState } from "../../../utils/useWebRTC";
+import { useVoiceChannel } from "../../../utils/useVoiceChannel";
+import { ICE_SERVERS } from "../../../utils/webrtcConfig";
+import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
+import { File as ExpoFile, Paths } from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import {
   apiRequest,
   deleteMessage,
@@ -60,13 +67,16 @@ import {
   fetchServerMemberPublicKeys,
   uploadServerKeys,
   fetchUserRoles,
+  uploadAttachment,
+  downloadAttachment,
   ConversationData,
   DirectMessageData,
-} from "../utils/api";
-import { useAuth } from "../utils/AuthContext";
-import { useWebSocket } from "../utils/useWebSocket";
-import { useDmWebSocket } from "../utils/useDmWebSocket";
-import { API_URL } from "../utils/config";
+  AttachmentData,
+} from "../../../utils/api";
+import { useAuth } from "../../../utils/AuthContext";
+import { useWebSocket } from "../../../utils/useWebSocket";
+import { useDmWebSocket } from "../../../utils/useDmWebSocket";
+import { API_URL } from "../../../utils/config";
 import {
   encryptDmMessage,
   decryptDmMessage,
@@ -75,30 +85,16 @@ import {
   encryptServerKeyForMember,
   decryptServerKey,
   generateServerKey,
+  encryptFileBytes,
+  decryptFileBytes,
+  encryptFileBytesForDm,
+  decryptFileBytesFromDm,
   encodeBase64,
   decodeBase64,
-} from "../utils/encryption";
-import { getOrCreateKeyPair, getPrivateKey, getServerKey, storeServerKey, clearServerKey } from "../utils/keyManager";
+} from "../../../utils/encryption";
+import { getOrCreateKeyPair, getPrivateKey, getServerKey, storeServerKey, clearServerKey } from "../../../utils/keyManager";
 
-interface Message {
-  id: number;
-  username: string;
-  content: string;
-  user_id: number;
-  timestamp: string;
-}
 
-interface Server {
-  id: number;
-  name: string;
-  owner_id?: number;
-  icon_url?: string;
-}
-
-interface User {
-  id: number;
-  username: string;
-}
 
 const ChatPage: React.FC = () => {
   const router = useRouter();
@@ -128,6 +124,15 @@ const ChatPage: React.FC = () => {
   const [menuMessageId, setMenuMessageId] = useState<number | null>(null);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
+
+  // File upload state
+  const [isUploading, setIsUploading] = useState(false);
+  const [pendingAttachment, setPendingAttachment] = useState<{
+    name: string;
+    size: number;
+    mimeType: string;
+    uri: string;
+  } | null>(null);
 
   // Ref for showSnackbar so WS callbacks can use the latest version (defined early)
   const showSnackbarRef = useRef<(msg: string) => void>(() => {});
@@ -183,6 +188,13 @@ const ChatPage: React.FC = () => {
   // ─── Encryption State ──────────────────────────────────────────
   const myKeyPairRef = useRef<{ publicKey: Uint8Array; secretKey: Uint8Array } | null>(null);
   const [encryptionReady, setEncryptionReady] = useState(false);
+  // Ref for sendKeyNeeded (populated after useWebSocket hook) so fetchAndCacheServerKey can use it
+  const sendKeyNeededRef = useRef<(() => void) | null>(null);
+
+  // ─── Call State ─────────────────────────────────────────────────
+  const [callMinimized, setCallMinimized] = useState(false);
+  // Ref for WebRTC signaling handler — set after useWebRTC hook is created
+  const handleCallSignalingRef = useRef<((msg: any) => void) | null>(null);
 
   // ─── Permission State ──────────────────────────────────────────
   const [channelPermissionDenied, setChannelPermissionDenied] = useState(false);
@@ -280,9 +292,22 @@ const ChatPage: React.FC = () => {
     });
   }, []);
 
-  const handleWsMessageEdited = useCallback((messageId: number, content: string) => {
+  const handleWsMessageEdited = useCallback(async (messageId: number, content: string, isEncrypted?: boolean, nonce?: string) => {
+    let decryptedContent = content;
+    if (isEncrypted && nonce) {
+      const currentServer = selectedServerRef.current;
+      if (currentServer) {
+        const serverKeyBytes = await getServerKey(currentServer.id);
+        if (serverKeyBytes) {
+          const plaintext = decryptServerMessage(content, nonce, serverKeyBytes);
+          decryptedContent = plaintext || "[Could not decrypt]";
+        } else {
+          decryptedContent = "[Encrypted]";
+        }
+      }
+    }
     setMessages((prev) =>
-      prev.map((m) => (m.id === messageId ? { ...m, content } : m))
+      prev.map((m) => (m.id === messageId ? { ...m, content: decryptedContent } : m))
     );
   }, []);
 
@@ -336,6 +361,13 @@ const ChatPage: React.FC = () => {
   loadMessagesRef.current = async () => {
     if (!token || !selectedServer) return;
     try {
+      // Ensure server key is fetched and cached before loading messages.
+      // This is the single authoritative place for server key fetching —
+      // it handles initial load, server switch, and reconnect.
+      if (myKeyPairRef.current) {
+        await fetchAndCacheServerKey(selectedServer.id);
+      }
+
       const res = await fetch(
         `${API_URL}/messages?server_id=${selectedServer.id}`,
         { headers: { Authorization: `Bearer ${token}` } }
@@ -354,44 +386,8 @@ const ChatPage: React.FC = () => {
       }
       const data = await res.json();
       setChannelPermissionDenied(false);
-      // Decrypt server messages — try to get the cached key first
+      // Decrypt server messages using the cached key
       let serverKeyBytes = await getServerKey(selectedServer.id);
-      // If no cached key but there are encrypted messages, try to fetch it now
-      const hasEncrypted = data.some((m: any) => m.is_encrypted);
-      if (!serverKeyBytes && hasEncrypted && token && myKeyPairRef.current) {
-        // Retry up to 3 times with a delay (another member may be redistributing keys)
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            const serverKeyData = await fetchServerKey(token, selectedServer.id, logout);
-            // Use encrypted_by to get the correct public key for decryption
-            const encryptorId = serverKeyData.encrypted_by;
-            const fallbackOwnerId = servers.find(s => s.id === selectedServer.id)?.owner_id;
-            const keyUserId = encryptorId || fallbackOwnerId;
-            if (keyUserId) {
-              const encryptorKeyData = await fetchPublicKey(token, keyUserId, logout);
-              if (encryptorKeyData.public_key) {
-                const encryptorPubKey = decodeBase64(encryptorKeyData.public_key);
-                const decryptedKey = decryptServerKey(
-                  serverKeyData.encrypted_key,
-                  serverKeyData.nonce,
-                  encryptorPubKey,
-                  myKeyPairRef.current!.secretKey
-                );
-                if (decryptedKey) {
-                  await storeServerKey(selectedServer.id, decryptedKey);
-                  serverKeyBytes = decryptedKey;
-                  break;
-                }
-              }
-            }
-          } catch {
-            // Key not available yet — wait and retry
-            if (attempt < 2) {
-              await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-          }
-        }
-      }
       const decryptedData = data.map((m: any) => {
         let content = m.content;
         if (m.is_encrypted && m.nonce && serverKeyBytes) {
@@ -416,9 +412,25 @@ const ChatPage: React.FC = () => {
         try {
           const missed = await syncMessages(token, selectedServer.id, lastId, logout);
           if (missed.length > 0) {
+            // Decrypt missed messages before adding to state
+            let serverKeyBytes = await getServerKey(selectedServer.id);
+            if (!serverKeyBytes) {
+              await fetchAndCacheServerKey(selectedServer.id);
+              serverKeyBytes = await getServerKey(selectedServer.id);
+            }
+            const decryptedMissed = missed.map((m: any) => {
+              let content = m.content;
+              if (m.is_encrypted && m.nonce && serverKeyBytes) {
+                const plaintext = decryptServerMessage(m.content, m.nonce, serverKeyBytes);
+                content = plaintext || "[Could not decrypt]";
+              } else if (m.is_encrypted) {
+                content = "[Encrypted]";
+              }
+              return { ...m, content };
+            });
             setMessages((prev) => {
               const existingIds = new Set(prev.map(m => m.id));
-              const newMsgs = missed.filter(m => !existingIds.has(m.id));
+              const newMsgs = decryptedMissed.filter((m: any) => !existingIds.has(m.id));
               return [...prev, ...newMsgs];
             });
           }
@@ -431,7 +443,7 @@ const ChatPage: React.FC = () => {
     }
     if (!connected) {
       wasDisconnectedRef.current = true;
-      setTypingUsers(new Map());
+      setTypingUsers((prev) => (prev.size === 0 ? prev : new Map()));
     }
   }, [selectedServer, token, logout]);
 
@@ -512,12 +524,20 @@ const ChatPage: React.FC = () => {
 
   // When a server's profile (name/icon) is updated
   const handleServerUpdated = useCallback((serverId: number, name: string, iconUrl: string | null) => {
-    setServers((prev) =>
-      prev.map((s) => (s.id === serverId ? { ...s, name, icon_url: iconUrl || s.icon_url } : s))
-    );
+    setServers((prev) => {
+      const target = prev.find((s) => s.id === serverId);
+      if (!target) return prev;
+      const newIcon = iconUrl || target.icon_url;
+      // Skip update if nothing actually changed
+      if (target.name === name && target.icon_url === newIcon) return prev;
+      return prev.map((s) => (s.id === serverId ? { ...s, name, icon_url: newIcon } : s));
+    });
     const currentServer = selectedServerRef.current;
     if (currentServer && currentServer.id === serverId) {
-      setSelectedServer({ ...currentServer, name, icon_url: iconUrl || currentServer.icon_url });
+      const newIcon = iconUrl || currentServer.icon_url;
+      if (currentServer.name !== name || currentServer.icon_url !== newIcon) {
+        setSelectedServer({ ...currentServer, name, icon_url: newIcon });
+      }
     }
   }, []);
 
@@ -527,7 +547,20 @@ const ChatPage: React.FC = () => {
     // (icon updates are handled by components that fetch user data)
   }, []);
 
-  const { isConnected, sendTyping, sendStopTyping, sendAck, sendKeyNeeded } = useWebSocket({
+  // Ref for voice channel signaling handlers — populated after useVoiceChannel hook
+  const voiceHandlersRef = useRef<{
+    onUserJoined?: (channelId: number, userId: number, username: string) => void;
+    onUserLeft?: (channelId: number, userId: number) => void;
+    onOffer?: (channelId: number, fromUserId: number, fromUsername: string, offer: any) => void;
+    onAnswer?: (channelId: number, fromUserId: number, answer: any) => void;
+    onIceCandidate?: (channelId: number, fromUserId: number, candidate: any) => void;
+    onChannelUsers?: (channelId: number, users: Array<{ user_id: number; username: string }>) => void;
+  }>({});
+
+  const {
+    isConnected, sendTyping, sendStopTyping, sendAck, sendKeyNeeded,
+    sendVoiceJoin, sendVoiceLeave, sendVoiceOffer, sendVoiceAnswer, sendVoiceIceCandidate,
+  } = useWebSocket({
     serverId: selectedServer?.id ?? null,
     token,
     onNewMessage: handleWsNewMessage,
@@ -541,7 +574,37 @@ const ChatPage: React.FC = () => {
     onKeyNeeded: handleKeyNeeded,
     onServerUpdated: handleServerUpdated,
     onUserUpdated: handleUserUpdated,
+    onVoiceUserJoined: (channelId, uid, uname) => voiceHandlersRef.current.onUserJoined?.(channelId, uid, uname),
+    onVoiceUserLeft: (channelId, uid) => voiceHandlersRef.current.onUserLeft?.(channelId, uid),
+    onVoiceOffer: (channelId, fromUserId, fromUsername, offer) => voiceHandlersRef.current.onOffer?.(channelId, fromUserId, fromUsername, offer),
+    onVoiceAnswer: (channelId, fromUserId, answer) => voiceHandlersRef.current.onAnswer?.(channelId, fromUserId, answer),
+    onVoiceIceCandidate: (channelId, fromUserId, candidate) => voiceHandlersRef.current.onIceCandidate?.(channelId, fromUserId, candidate),
+    onVoiceChannelUsers: (channelId, users) => voiceHandlersRef.current.onChannelUsers?.(channelId, users),
   });
+
+  // Keep sendKeyNeeded ref in sync so fetchAndCacheServerKey can request key redistribution
+  sendKeyNeededRef.current = sendKeyNeeded;
+
+  // ─── Voice Channel Hook ──────────────────────────────────────────
+  const voiceChannel = useVoiceChannel({
+    userId: userId || 0,
+    iceServers: ICE_SERVERS,
+    sendVoiceJoin,
+    sendVoiceLeave,
+    sendVoiceOffer,
+    sendVoiceAnswer,
+    sendVoiceIceCandidate,
+  });
+
+  // Keep voice handlers ref in sync
+  voiceHandlersRef.current = {
+    onUserJoined: voiceChannel.handleVoiceUserJoined,
+    onUserLeft: voiceChannel.handleVoiceUserLeft,
+    onOffer: voiceChannel.handleVoiceOffer,
+    onAnswer: voiceChannel.handleVoiceAnswer,
+    onIceCandidate: voiceChannel.handleVoiceIceCandidate,
+    onChannelUsers: voiceChannel.handleVoiceChannelUsers,
+  };
 
   // ─── DM WebSocket callbacks ──────────────────────────────────
   const handleDmNewMessage = useCallback(async (conversationId: number, message: any) => {
@@ -563,6 +626,7 @@ const ChatPage: React.FC = () => {
           content: decryptedContent,
           user_id: message.user_id,
           timestamp: message.created_at,
+          attachment: message.attachment || null,
         }];
       });
     } else {
@@ -573,16 +637,34 @@ const ChatPage: React.FC = () => {
         return next;
       });
     }
-    // Refresh conversations list so new DMs appear in receiver's sidebar
-    loadConversationsRef.current();
+    // Move conversation to top of list instead of re-fetching the entire
+    // conversations list (which caused full sidebar re-renders / screen flash).
+    setConversations((prev) => {
+      const idx = prev.findIndex((c) => c.id === conversationId);
+      if (idx === -1) {
+        // Brand-new conversation — do a full fetch once
+        loadConversationsRef.current();
+        return prev;
+      }
+      if (idx === 0) return prev; // Already at top, no re-render needed
+      const updated = [...prev];
+      const [conv] = updated.splice(idx, 1);
+      updated.unshift(conv);
+      return updated;
+    });
   }, []);
 
-  const handleDmMessageEdited = useCallback((conversationId: number, messageId: number, content: string) => {
-    if (conversationId === selectedConversationIdRef.current) {
-      setDmMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, content } : m))
-      );
+  const handleDmMessageEdited = useCallback(async (conversationId: number, messageId: number, content: string, isEncrypted?: boolean, nonce?: string, senderPublicKey?: string) => {
+    if (conversationId !== selectedConversationIdRef.current) return;
+    let decryptedContent = content;
+    if (isEncrypted && nonce && senderPublicKey && myKeyPairRef.current) {
+      const senderPubKey = decodeBase64(senderPublicKey);
+      const plaintext = decryptDmMessage(content, nonce, senderPubKey, myKeyPairRef.current.secretKey);
+      decryptedContent = plaintext || "[Could not decrypt]";
     }
+    setDmMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, content: decryptedContent } : m))
+    );
   }, []);
 
   const handleDmMessageDeleted = useCallback((conversationId: number, messageId: number) => {
@@ -651,8 +733,19 @@ const ChatPage: React.FC = () => {
     await redistributeServerKeyRef.current?.(serverId);
   }, []);
 
-  const { isConnected: dmWsConnected, isConnecting: dmWsConnecting, sendDmTyping, sendDmStopTyping } = useDmWebSocket({
+  const {
+    isConnected: dmWsConnected,
+    isConnecting: dmWsConnecting,
+    sendDmTyping,
+    sendDmStopTyping,
+    sendCallOffer,
+    sendCallAnswer,
+    sendCallIceCandidate,
+    sendCallReject,
+    sendCallHangup,
+  } = useDmWebSocket({
     token,
+    refreshAccessToken,
     onDmNewMessage: handleDmNewMessage,
     onDmMessageEdited: handleDmMessageEdited,
     onDmMessageDeleted: handleDmMessageDeleted,
@@ -662,7 +755,49 @@ const ChatPage: React.FC = () => {
     onFriendAccepted: handleFriendAccepted,
     onServerNotification: handleServerNotification,
     onKeyRedistributionNeeded: handleKeyRedistributionNeeded,
+    // Call signaling — forward to WebRTC hook via ref
+    onCallOffer: (fromUserId, fromUsername, offer, callType, callId) => {
+      handleCallSignalingRef.current?.({ type: "call_offer", from_user_id: fromUserId, from_username: fromUsername, offer, call_type: callType, call_id: callId });
+    },
+    onCallAnswer: (fromUserId, answer, callId) => {
+      handleCallSignalingRef.current?.({ type: "call_answer", from_user_id: fromUserId, answer, call_id: callId });
+    },
+    onCallIceCandidate: (fromUserId, candidate, callId) => {
+      handleCallSignalingRef.current?.({ type: "call_ice_candidate", from_user_id: fromUserId, candidate, call_id: callId });
+    },
+    onCallReject: (fromUserId, callId) => {
+      handleCallSignalingRef.current?.({ type: "call_reject", from_user_id: fromUserId, call_id: callId });
+    },
+    onCallHangup: (fromUserId, callId) => {
+      handleCallSignalingRef.current?.({ type: "call_hangup", from_user_id: fromUserId, call_id: callId });
+    },
   });
+
+  // ─── WebRTC Call Hook ──────────────────────────────────────────
+  const webrtc = useWebRTC({
+    userId: userId || 0,
+    iceServers: ICE_SERVERS,
+    sendOffer: sendCallOffer,
+    sendAnswer: sendCallAnswer,
+    sendIceCandidate: sendCallIceCandidate,
+    sendReject: sendCallReject,
+    sendHangup: sendCallHangup,
+  });
+
+  // Keep signaling ref in sync
+  handleCallSignalingRef.current = webrtc.handleSignalingMessage;
+
+  const startDmCall = useCallback(async (callType: "voice" | "video") => {
+    if (!activeConversation || !userId) return;
+    const partner = activeConversation.members.find((m: any) => m.id !== userId);
+    if (!partner) return;
+    setCallMinimized(false);
+    try {
+      await webrtc.startCall(partner.id, partner.username, callType);
+    } catch (err: any) {
+      showSnackbarRef.current(err.message || "Failed to start call. HTTPS required for non-localhost.");
+    }
+  }, [activeConversation, userId, webrtc]);
 
   // Clear typing users when switching contexts
   useEffect(() => {
@@ -735,16 +870,38 @@ const ChatPage: React.FC = () => {
       try {
         const keyPair = await getOrCreateKeyPair();
         myKeyPairRef.current = keyPair;
-        // Upload our public key to the server
-        await uploadPublicKey(token, encodeBase64(keyPair.publicKey), logout);
-        setEncryptionReady(true);
+        const pubKeyB64 = encodeBase64(keyPair.publicKey);
+        console.log(`[KeyDebug] initEncryption: keypair ready, publicKey=${pubKeyB64.substring(0, 20)}...`);
+        // Upload our public key to the server — try with current token first
+        try {
+          await uploadPublicKey(token, pubKeyB64, () => {});
+          console.log(`[KeyDebug] initEncryption: public key uploaded`);
+          setEncryptionReady(true);
+        } catch (uploadErr) {
+          console.warn(`[KeyDebug] initEncryption: upload failed, trying token refresh...`, uploadErr);
+          // Token might be expired — try refreshing
+          const refreshed = await refreshAccessToken();
+          if (refreshed) {
+            const { getSecureItem } = require("../../../utils/secureStorage");
+            const newToken = await getSecureItem("token");
+            if (newToken) {
+              await uploadPublicKey(newToken, pubKeyB64, logout);
+              console.log(`[KeyDebug] initEncryption: public key uploaded after token refresh`);
+              setEncryptionReady(true);
+              return;
+            }
+          }
+          // Still set encryption ready if key pair exists — we can encrypt/decrypt locally
+          console.log(`[KeyDebug] initEncryption: upload failed but setting encryptionReady anyway`);
+          setEncryptionReady(true);
+        }
       } catch (err) {
-        console.error("Failed to initialize encryption:", err);
+        console.error("[KeyDebug] initEncryption: FAILED:", err);
         // App still works, just without encryption
       }
     };
     initEncryption();
-  }, [token, logout]);
+  }, [token, logout, refreshAccessToken]);
 
   // ─── Decrypt helper for messages ──────────────────────────────
   const decryptMessageContent = useCallback(async (msg: any, mode: "dm" | "server"): Promise<string> => {
@@ -774,9 +931,15 @@ const ChatPage: React.FC = () => {
   // ─── Server key helpers ──────────────────────────────────────
   /** Fetch the encrypted server key from the backend, decrypt it, and cache locally */
   const fetchAndCacheServerKey = useCallback(async (serverId: number): Promise<boolean> => {
-    if (!token || !myKeyPairRef.current) return false;
+    if (!token || !myKeyPairRef.current) {
+      console.log(`[KeyDebug] fetchAndCacheServerKey(${serverId}): skipped — token=${!!token}, keyPair=${!!myKeyPairRef.current}`);
+      return false;
+    }
     try {
+      console.log(`[KeyDebug] fetchAndCacheServerKey(${serverId}): fetching encrypted key from backend...`);
       const serverKeyData = await fetchServerKey(token, serverId, logout);
+      console.log(`[KeyDebug] fetchAndCacheServerKey(${serverId}): got key data — encrypted_by=${serverKeyData.encrypted_by}, hasKey=${!!serverKeyData.encrypted_key}, hasNonce=${!!serverKeyData.nonce}`);
+
       // Use encrypted_by to determine whose public key we need for decryption
       // The key was encrypted with nacl.box(serverKey, nonce, ourPK, encryptorSK)
       // To decrypt we need encryptorPK + ourSK
@@ -784,9 +947,16 @@ const ChatPage: React.FC = () => {
       if (!encryptorId) {
         // Legacy fallback: assume server owner encrypted it
         const serverInfo = servers.find(s => s.id === serverId);
-        if (!serverInfo?.owner_id) return false;
+        if (!serverInfo?.owner_id) {
+          console.warn(`[KeyDebug] fetchAndCacheServerKey(${serverId}): no encryptorId and no owner found`);
+          return false;
+        }
+        console.log(`[KeyDebug] fetchAndCacheServerKey(${serverId}): legacy path — fetching owner ${serverInfo.owner_id} public key`);
         const ownerKeyData = await fetchPublicKey(token, serverInfo.owner_id, logout);
-        if (!ownerKeyData.public_key) return false;
+        if (!ownerKeyData.public_key) {
+          console.warn(`[KeyDebug] fetchAndCacheServerKey(${serverId}): owner has no public key`);
+          return false;
+        }
         const ownerPubKey = decodeBase64(ownerKeyData.public_key);
         const serverKeyBytes = decryptServerKey(
           serverKeyData.encrypted_key,
@@ -796,12 +966,19 @@ const ChatPage: React.FC = () => {
         );
         if (serverKeyBytes) {
           await storeServerKey(serverId, serverKeyBytes);
+          console.log(`[KeyDebug] fetchAndCacheServerKey(${serverId}): decrypted and cached (legacy path)`);
           return true;
         }
+        console.warn(`[KeyDebug] fetchAndCacheServerKey(${serverId}): decryption FAILED (legacy path) — key was encrypted for a different keypair. Requesting re-distribution...`);
+        sendKeyNeededRef.current?.();
         return false;
       }
+      console.log(`[KeyDebug] fetchAndCacheServerKey(${serverId}): fetching encryptor ${encryptorId} public key`);
       const encryptorKeyData = await fetchPublicKey(token, encryptorId, logout);
-      if (!encryptorKeyData.public_key) return false;
+      if (!encryptorKeyData.public_key) {
+        console.warn(`[KeyDebug] fetchAndCacheServerKey(${serverId}): encryptor has no public key`);
+        return false;
+      }
       const encryptorPubKey = decodeBase64(encryptorKeyData.public_key);
       const serverKeyBytes = decryptServerKey(
         serverKeyData.encrypted_key,
@@ -811,11 +988,16 @@ const ChatPage: React.FC = () => {
       );
       if (serverKeyBytes) {
         await storeServerKey(serverId, serverKeyBytes);
+        console.log(`[KeyDebug] fetchAndCacheServerKey(${serverId}): decrypted and cached`);
         return true;
       }
+      console.warn(`[KeyDebug] fetchAndCacheServerKey(${serverId}): decryption FAILED — key was encrypted for a different keypair. Requesting re-distribution...`);
+      sendKeyNeededRef.current?.();
       return false;
-    } catch {
-      // Server key not yet distributed — that's okay
+    } catch (err) {
+      console.warn(`[KeyDebug] fetchAndCacheServerKey(${serverId}): caught error:`, err);
+      // Server key not yet distributed — request it
+      sendKeyNeededRef.current?.();
       return false;
     }
   }, [token, logout, servers]);
@@ -930,13 +1112,11 @@ const ChatPage: React.FC = () => {
       });
       // Check user's permissions for this server
       checkServerPermissions(server.id);
-      // Fetch and cache server encryption key in background
-      // Then redistribute to any members who don't have it (any key-holder can do this)
+      // Redistribute server key to members who may not have it yet (non-blocking)
+      // Note: loadMessagesRef.current handles fetchAndCacheServerKey before decrypting
       if (encryptionReady) {
         fetchAndCacheServerKey(server.id).then((success) => {
-          if (success) {
-            redistributeServerKey(server.id);
-          }
+          if (success) redistributeServerKey(server.id);
         });
       }
     }
@@ -1034,13 +1214,13 @@ const ChatPage: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!token || !selectedServer || isDmMode) return;
+    if (!token || !selectedServer || isDmMode || !encryptionReady) return;
     loadMessages();
     if (!isConnected) {
       const intervalId = setInterval(loadMessages, 5000);
       return () => clearInterval(intervalId);
     }
-  }, [token, selectedServer, isConnected, isDmMode]);
+  }, [token, selectedServer, isConnected, isDmMode, encryptionReady]);
 
   // ─── Load DM messages ────────────────────────────────────────
   const loadDmMessages = useCallback(async () => {
@@ -1061,6 +1241,7 @@ const ChatPage: React.FC = () => {
           content,
           user_id: m.user_id,
           timestamp: m.created_at,
+          attachment: m.attachment || null,
         };
       }));
       setDmMessages(decryptedMessages);
@@ -1070,14 +1251,14 @@ const ChatPage: React.FC = () => {
   }, [token, selectedConversationId, logout]);
 
   useEffect(() => {
-    if (!token || !selectedConversationId || !isDmMode) return;
+    if (!token || !selectedConversationId || !isDmMode || !encryptionReady) return;
     loadDmMessages();
     // Poll as fallback when DM WS disconnected
     if (!dmWsConnected) {
       const intervalId = setInterval(loadDmMessages, 5000);
       return () => clearInterval(intervalId);
     }
-  }, [token, selectedConversationId, isDmMode, dmWsConnected, loadDmMessages]);
+  }, [token, selectedConversationId, isDmMode, dmWsConnected, loadDmMessages, encryptionReady]);
 
   // Auto-scroll to bottom on new messages
   const currentMessages = isDmMode ? dmMessages : messages;
@@ -1089,8 +1270,361 @@ const ChatPage: React.FC = () => {
     }
   }, [currentMessages]);
 
+  // ─── File Upload Helpers ─────────────────────────────────────
+
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+  const readFileAsBytes = async (uri: string): Promise<Uint8Array> => {
+    if (Platform.OS === "web") {
+      const response = await fetch(uri);
+      const arrayBuffer = await response.arrayBuffer();
+      return new Uint8Array(arrayBuffer);
+    } else {
+      // React Native: read as base64 via fetch + blob
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const arrayBuffer = reader.result as ArrayBuffer;
+          resolve(new Uint8Array(arrayBuffer));
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(blob);
+      });
+    }
+  };
+
+  const handlePickFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "*/*",
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) return;
+
+      const file = result.assets[0];
+      if (file.size && file.size > MAX_FILE_SIZE) {
+        setError("File too large. Maximum size is 10MB.");
+        return;
+      }
+
+      setPendingAttachment({
+        name: file.name,
+        size: file.size || 0,
+        mimeType: file.mimeType || "application/octet-stream",
+        uri: file.uri,
+      });
+    } catch (err) {
+      console.error("File picker error:", err);
+      setError("Failed to pick file");
+    }
+  };
+
+  const cancelAttachment = () => {
+    setPendingAttachment(null);
+  };
+
+  const handleSendAttachment = async () => {
+    if (!pendingAttachment || !token) return;
+    if (!selectedServer && !selectedConversationId) return;
+
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      // Read file bytes
+      const fileBytes = await readFileAsBytes(pendingAttachment.uri);
+
+      let encryptedBytes: Uint8Array;
+      let encryptionNonce: string;
+      let fileKeyEncrypted: string | undefined;
+      let fileKeyNonce: string | undefined;
+      let senderFileKeyEncrypted: string | undefined;
+      let senderFileKeyNonce: string | undefined;
+
+      if (isDmMode && selectedConversationId) {
+        // DM: encrypt file with one-time key, box-encrypt file key for recipient AND sender
+        if (encryptionReady && myKeyPairRef.current && activeConversation) {
+          const recipient = activeConversation.members.find(m => m.id !== userId);
+          if (recipient) {
+            const recipientKeyData = await fetchPublicKey(token, recipient.id, logout);
+            if (recipientKeyData.public_key) {
+              const recipientPubKey = decodeBase64(recipientKeyData.public_key);
+              const result = encryptFileBytesForDm(fileBytes, recipientPubKey, myKeyPairRef.current.secretKey, myKeyPairRef.current.publicKey);
+              encryptedBytes = result.encrypted;
+              encryptionNonce = result.nonce;
+              fileKeyEncrypted = result.fileKeyEncrypted;
+              fileKeyNonce = result.fileKeyNonce;
+              senderFileKeyEncrypted = result.senderFileKeyEncrypted;
+              senderFileKeyNonce = result.senderFileKeyNonce;
+            } else {
+              throw new Error("Recipient has no public key");
+            }
+          } else {
+            throw new Error("No DM recipient found");
+          }
+        } else {
+          throw new Error("Encryption not ready");
+        }
+      } else if (selectedServer) {
+        // Server: encrypt file with server key
+        let serverKeyBytes = await getServerKey(selectedServer.id);
+        if (!serverKeyBytes) {
+          // Key not cached yet — try fetching it now
+          await fetchAndCacheServerKey(selectedServer.id);
+          serverKeyBytes = await getServerKey(selectedServer.id);
+        }
+        if (!serverKeyBytes) throw new Error("No server encryption key available");
+        const result = encryptFileBytes(fileBytes, serverKeyBytes);
+        encryptedBytes = result.encrypted;
+        encryptionNonce = result.nonce;
+      } else {
+        throw new Error("No target for upload");
+      }
+
+      // Build FormData
+      const formData = new FormData();
+      if (Platform.OS === "web") {
+        const blob = new Blob([encryptedBytes!], { type: "application/octet-stream" });
+        formData.append("file", blob, "encrypted.enc");
+      } else {
+        // For React Native, convert to base64 and use a data URI
+        const base64 = encodeBase64(encryptedBytes!);
+        formData.append("file", {
+          uri: `data:application/octet-stream;base64,${base64}`,
+          name: "encrypted.enc",
+          type: "application/octet-stream",
+        } as any);
+      }
+
+      if (selectedServer) formData.append("server_id", String(selectedServer.id));
+      if (selectedConversationId) formData.append("conversation_id", String(selectedConversationId));
+      formData.append("original_filename", pendingAttachment.name);
+      formData.append("mime_type", pendingAttachment.mimeType);
+      formData.append("file_size", String(pendingAttachment.size));
+      formData.append("encryption_nonce", encryptionNonce!);
+      if (fileKeyEncrypted) formData.append("file_key_encrypted", fileKeyEncrypted);
+      if (fileKeyNonce) formData.append("file_key_nonce", fileKeyNonce);
+      if (senderFileKeyEncrypted) formData.append("sender_file_key_encrypted", senderFileKeyEncrypted);
+      if (senderFileKeyNonce) formData.append("sender_file_key_nonce", senderFileKeyNonce);
+
+      // Upload
+      const attachmentData = await uploadAttachment(formData, token, logout);
+
+      // Send a message with the attachment
+      const messageContent = input.trim() || `📎 ${pendingAttachment.name}`;
+      const tempId = Date.now();
+
+      if (isDmMode && selectedConversationId) {
+        const tempMessage: Message = {
+          id: tempId,
+          username: username || "You",
+          content: messageContent,
+          user_id: userId!,
+          timestamp: new Date().toISOString(),
+          attachment: {
+            id: attachmentData.id,
+            original_filename: attachmentData.original_filename,
+            mime_type: attachmentData.mime_type,
+            file_size: attachmentData.file_size,
+            encryption_nonce: attachmentData.encryption_nonce,
+            file_key_encrypted: attachmentData.file_key_encrypted,
+            file_key_nonce: attachmentData.file_key_nonce,
+            sender_file_key_encrypted: attachmentData.sender_file_key_encrypted,
+            sender_file_key_nonce: attachmentData.sender_file_key_nonce,
+            uploader_id: userId!,
+          },
+        };
+        setDmMessages(prev => [...prev, tempMessage]);
+
+        let encryptionParams: any;
+        if (encryptionReady && myKeyPairRef.current && activeConversation) {
+          const recipient = activeConversation.members.find(m => m.id !== userId);
+          if (recipient) {
+            const recipientKeyData = await fetchPublicKey(token, recipient.id, logout);
+            if (recipientKeyData.public_key) {
+              const recipientPubKey = decodeBase64(recipientKeyData.public_key);
+              const { ciphertext, nonce } = encryptDmMessage(messageContent, recipientPubKey, myKeyPairRef.current.secretKey);
+              encryptionParams = {
+                is_encrypted: true,
+                nonce,
+                sender_public_key: encodeBase64(myKeyPairRef.current.publicKey),
+                attachment_id: attachmentData.id,
+              };
+              const result = await sendDirectMessage(token, selectedConversationId, ciphertext, logout, encryptionParams);
+              setDmMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: result.id } : m));
+            }
+          }
+        }
+      } else if (selectedServer) {
+        const tempMessage: Message = {
+          id: tempId,
+          username: username || "You",
+          content: messageContent,
+          user_id: userId!,
+          timestamp: new Date().toISOString(),
+          attachment: {
+            id: attachmentData.id,
+            original_filename: attachmentData.original_filename,
+            mime_type: attachmentData.mime_type,
+            file_size: attachmentData.file_size,
+            encryption_nonce: attachmentData.encryption_nonce,
+          },
+        };
+        setMessages(prev => [...prev, tempMessage]);
+
+        let encryptionParams: any;
+        if (encryptionReady && myKeyPairRef.current) {
+          let serverKeyBytes = await getServerKey(selectedServer.id);
+          if (!serverKeyBytes) {
+            await fetchAndCacheServerKey(selectedServer.id);
+            serverKeyBytes = await getServerKey(selectedServer.id);
+          }
+          if (serverKeyBytes) {
+            const { ciphertext, nonce } = encryptServerMessage(messageContent, serverKeyBytes);
+            encryptionParams = {
+              is_encrypted: true,
+              nonce,
+              sender_public_key: encodeBase64(myKeyPairRef.current.publicKey),
+              attachment_id: attachmentData.id,
+            };
+            const result: any = await sendMessage(token, ciphertext, selectedServer.id, userId!, logout, encryptionParams);
+            if (result?.message_id) {
+              setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: result.message_id } : m));
+            }
+          }
+        }
+      }
+
+      setPendingAttachment(null);
+      setInput("");
+    } catch (err: any) {
+      console.error("File upload error:", err);
+      setError(err.message || "Failed to upload file");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleDownloadAttachment = async (attachment: MessageAttachment) => {
+    if (!token) return;
+
+    try {
+      // Use attachment metadata directly (always available, avoids RN header issues)
+      const nonce = attachment.encryption_nonce;
+      const fileKeyEncrypted = attachment.file_key_encrypted;
+      const fileKeyNonce = attachment.file_key_nonce;
+      const mimeType = attachment.mime_type;
+      const filename = attachment.original_filename;
+
+      let encryptedData: Uint8Array;
+
+      if (Platform.OS === "web") {
+        // Web: fetch + arrayBuffer works reliably
+        const result = await downloadAttachment(attachment.id, token, logout);
+        encryptedData = new Uint8Array(result.bytes);
+      } else {
+        // Mobile: RN's fetch doesn't reliably support arrayBuffer().
+        // Use expo-file-system's new File API for reliable binary download.
+        const tempFile = new ExpoFile(Paths.cache, `enc_${attachment.id}_${Date.now()}.tmp`);
+        const downloaded = await ExpoFile.downloadFileAsync(
+          `${API_URL}/attachments/${attachment.id}`,
+          tempFile,
+          { headers: { Authorization: `Bearer ${token}` }, idempotent: true }
+        );
+        const base64Enc = await downloaded.base64();
+        encryptedData = decodeBase64(base64Enc);
+        try { downloaded.delete(); } catch {}
+      }
+
+      let decryptedBytes: Uint8Array | null = null;
+
+      if (fileKeyEncrypted && fileKeyNonce && isDmMode && activeConversation) {
+        // DM file: decrypt the file key with nacl.box, then decrypt file
+        const mySecretKey = myKeyPairRef.current?.secretKey;
+        if (!mySecretKey) throw new Error("No key pair");
+
+        // If we uploaded it ourselves, use the sender-encrypted file key
+        if (attachment.uploader_id === userId && attachment.sender_file_key_encrypted && attachment.sender_file_key_nonce) {
+          decryptedBytes = decryptFileBytesFromDm(
+            encryptedData, nonce, attachment.sender_file_key_encrypted, attachment.sender_file_key_nonce,
+            myKeyPairRef.current.publicKey, mySecretKey
+          );
+        }
+
+        // Otherwise try recipient decryption with each member's public key
+        if (!decryptedBytes) {
+          for (const member of activeConversation.members) {
+            if (member.id === userId) continue;
+            try {
+              const pubKeyData = await fetchPublicKey(token, member.id, logout);
+              if (pubKeyData.public_key) {
+                decryptedBytes = decryptFileBytesFromDm(
+                  encryptedData, nonce, fileKeyEncrypted, fileKeyNonce,
+                  decodeBase64(pubKeyData.public_key), mySecretKey
+                );
+                if (decryptedBytes) break;
+              }
+            } catch { /* try next member */ }
+          }
+        }
+      } else {
+        // Server file: decrypt with server key
+        const serverId = selectedServer?.id || selectedServerRef.current?.id;
+        if (!serverId) throw new Error("No server context");
+        let serverKeyBytes = await getServerKey(serverId);
+        if (!serverKeyBytes) {
+          await fetchAndCacheServerKey(serverId);
+          serverKeyBytes = await getServerKey(serverId);
+        }
+        if (!serverKeyBytes) throw new Error("No server key available. Try re-selecting the server.");
+        decryptedBytes = decryptFileBytes(encryptedData, nonce, serverKeyBytes);
+      }
+
+      if (!decryptedBytes) {
+        setError("Failed to decrypt file");
+        return;
+      }
+
+      // Trigger download / share
+      if (Platform.OS === "web") {
+        const blob = new Blob([decryptedBytes], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        // Mobile: write decrypted file to cache dir and open share sheet
+        const outFile = new ExpoFile(Paths.cache, filename);
+        outFile.write(decryptedBytes);
+
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(outFile.uri, {
+            mimeType: mimeType,
+            dialogTitle: `Save ${filename}`,
+          });
+        } else {
+          setError("Sharing is not available on this device");
+        }
+      }
+    } catch (err: any) {
+      console.error("Download error:", err);
+      setError(err.message || "Failed to download file");
+    }
+  };
+
   // ─── Unified send/edit/delete handlers ───────────────────────
   const handleSend = async () => {
+    // If there's a pending attachment, send it instead
+    if (pendingAttachment) {
+      return handleSendAttachment();
+    }
     if (!input.trim() || !token) return;
     setError(null);
 
@@ -1168,7 +1702,12 @@ const ChatPage: React.FC = () => {
         let encryptionParams: { is_encrypted: boolean; nonce: string; sender_public_key: string } | undefined;
         if (encryptionReady && myKeyPairRef.current) {
           let serverKeyBytes = await getServerKey(selectedServer.id);
-          // If no server key and we're the owner, initialize encryption for this server
+          // If no server key, try fetching it
+          if (!serverKeyBytes) {
+            await fetchAndCacheServerKey(selectedServer.id);
+            serverKeyBytes = await getServerKey(selectedServer.id);
+          }
+          // If still no server key and we're the owner, initialize encryption for this server
           if (!serverKeyBytes && selectedServer.owner_id === userId) {
             serverKeyBytes = await initializeServerEncryption(selectedServer.id);
           }
@@ -1354,81 +1893,36 @@ const ChatPage: React.FC = () => {
   const dmPartnerName = isDmMode
     ? (activeConversation ? getConversationDisplayName(activeConversation) : dmPartnerNameOverride)
     : null;
-  const headerTitle = isDmMode
-    ? (dmPartnerName ? `@${dmPartnerName}` : "Direct Message")
-    : selectedServer?.name || "";
-
-  const headerIcon = isDmMode
-    ? <MessageCircle size={isMobile ? 20 : 24} color="#72767d" />
-    : <Hash size={isMobile ? 20 : 24} color="#72767d" />;
+  // ─── Stable ref for image decrypt context ─────────────────────
+  const imageDecryptCtxRef = useRef<ImageDecryptContext>({
+    token, logout, isDmMode, activeConversation, userId,
+    myKeyPairRef, selectedServerRef, getServerKey,
+    fetchAndCacheServerKey, handleDownloadAttachment,
+  });
+  // Keep in sync every render (cheap — just ref assignment, no re-render)
+  imageDecryptCtxRef.current = {
+    token, logout, isDmMode, activeConversation, userId,
+    myKeyPairRef, selectedServerRef, getServerKey,
+    fetchAndCacheServerKey, handleDownloadAttachment,
+  };
 
   const renderMessage = ({ item: msg }: { item: Message }) => (
-    <Pressable
-      onLongPress={() => openMessageMenu(msg.id, msg.content)}
-      delayLongPress={300}
-      style={{ marginBottom: isMobile ? 12 : 8 }}
-    >
-      <Card
-        backgroundColor={editingMessageId === msg.id ? "#40444b" : "#2c2f33"}
-        padding={isMobile ? "$3" : "$3"}
-        borderRadius="$3"
-      >
-        {editingMessageId === msg.id ? (
-          <YStack gap="$2">
-            <Input
-              value={editContent}
-              onChangeText={setEditContent}
-              multiline
-              numberOfLines={4}
-              backgroundColor="#40444b"
-              borderWidth={0}
-              color="white"
-              placeholder="Edit your message"
-              placeholderTextColor="#72767d"
-              autoFocus
-              fontSize={isMobile ? "$4" : "$3"}
-            />
-            <XStack justifyContent="flex-end" gap="$2">
-              <Button
-                size="$3"
-                onPress={() => setEditingMessageId(null)}
-                backgroundColor="#40444b"
-              >
-                Cancel
-              </Button>
-              <Button
-                size="$3"
-                onPress={() => handleEditSave(msg.id)}
-                backgroundColor="#5865F2"
-              >
-                Save
-              </Button>
-            </XStack>
-          </YStack>
-        ) : (
-          <YStack gap="$1">
-            <XStack alignItems="center" justifyContent="space-between">
-              <XStack alignItems="center" flex={1} gap="$2">
-                <Pressable onPress={() => handleUserEdit({ id: msg.user_id, username: msg.username })}>
-                  <Text fontWeight="700" color="white" fontSize={isMobile ? "$5" : "$4"}>
-                    {msg.username}
-                  </Text>
-                </Pressable>
-                <Text fontSize={isMobile ? "$2" : "$1"} color="#72767d">
-                  {formatTimestamp(msg.timestamp)}
-                </Text>
-              </XStack>
-              <TouchableOpacity onPress={() => openMessageMenu(msg.id, msg.content)}>
-                <MoreVertical size={20} color="#b9bbbe" />
-              </TouchableOpacity>
-            </XStack>
-            <Text color="#dcddde" fontSize={isMobile ? "$4" : "$3"} lineHeight={isMobile ? 22 : 20}>
-              {msg.content}
-            </Text>
-          </YStack>
-        )}
-      </Card>
-    </Pressable>
+    <MessageBubble
+      msg={msg}
+      editingMessageId={editingMessageId}
+      editContent={editContent}
+      onEditContentChange={setEditContent}
+      onEditSave={handleEditSave}
+      onEditCancel={() => setEditingMessageId(null)}
+      onUserPress={(uid, uname) => handleUserEdit({ id: uid, username: uname })}
+      onLongPress={(id) => openMessageMenu(id, "")}
+      onMorePress={(id) => openMessageMenu(id, "")}
+      formatTimestamp={formatTimestamp}
+      isMobile={isMobile}
+      userId={userId}
+      imageDecryptCtxRef={imageDecryptCtxRef}
+      onDownloadAttachment={handleDownloadAttachment}
+    />
   );
 
   useEffect(() => {
@@ -1535,102 +2029,54 @@ const ChatPage: React.FC = () => {
           {/* Center Chat Panel */}
           {hasSelection ? (
             <YStack flex={1} backgroundColor="#36393f">
-              {/* Header */}
-              <XStack
-                height={isMobile ? 56 : 64}
-                paddingHorizontal={isMobile ? "$3" : "$4"}
-                alignItems="center"
-                justifyContent="space-between"
-                backgroundColor="#2f3136"
-                borderBottomWidth={1}
-                borderBottomColor="#202225"
-              >
-                <XStack alignItems="center" gap="$3" flex={1}>
-                  {!isDesktop && (
-                    <TouchableOpacity onPress={() => setShowServerSidebar(true)} style={{ position: 'relative' }}>
-                      <Menu size={24} color="#b9bbbe" />
-                      {(unreadDmCount + unreadServers.size) > 0 && (
-                        <YStack
-                          position="absolute"
-                          right={-6}
-                          top={-6}
-                          backgroundColor="#f04747"
-                          borderRadius={8}
-                          minWidth={16}
-                          height={16}
-                          justifyContent="center"
-                          alignItems="center"
-                          paddingHorizontal={4}
-                        >
-                          <Text color="white" fontSize={10} fontWeight="700">
-                            {(unreadDmCount + unreadServers.size) > 9 ? "9+" : (unreadDmCount + unreadServers.size)}
-                          </Text>
-                        </YStack>
-                      )}
-                    </TouchableOpacity>
-                  )}
-                  {headerIcon}
-                  <Text
-                    fontSize={isMobile ? "$5" : "$7"}
-                    fontWeight="600"
-                    color="white"
-                    numberOfLines={1}
-                    flex={1}
-                  >
-                    {headerTitle}
-                  </Text>
-                </XStack>
-                <XStack gap="$2" alignItems="center">
-                  {showReconnecting && (
-                    <XStack
-                      backgroundColor="rgba(240,71,71,0.2)"
-                      paddingHorizontal="$2"
-                      paddingVertical="$1"
-                      borderRadius="$2"
-                      alignItems="center"
-                      gap="$1"
-                    >
-                      <WifiOff size={14} color="#f04747" />
-                      {!isMobile && (
-                        <Text color="#f04747" fontSize="$1" fontWeight="600">
-                          Reconnecting
-                        </Text>
-                      )}
-                    </XStack>
-                  )}
-                  {/* Only show Users and Settings buttons in server mode */}
-                  {!isDmMode && (
-                    <>
-                      {!isMobile && (
-                        <Button
-                          size="$3"
-                          backgroundColor="transparent"
-                          borderWidth={1}
-                          borderColor="#5865F2"
-                          icon={<Users size={16} color="#5865F2" />}
-                          onPress={() => setShowUserSidebar(true)}
-                          pressStyle={{
-                            backgroundColor: "rgba(88,101,242,0.1)",
-                          }}
-                        />
-                      )}
-                      <Button
-                        size="$3"
-                        backgroundColor="transparent"
-                        borderWidth={1}
-                        borderColor="#5865F2"
-                        icon={<Settings size={16} color="#5865F2" />}
-                        onPress={() => setIsServerSettingsOpen(true)}
-                        pressStyle={{
-                          backgroundColor: "rgba(88,101,242,0.1)",
-                        }}
-                      >
-                        {!isMobile && "Settings"}
-                      </Button>
-                    </>
-                  )}
-                </XStack>
-              </XStack>
+              <ChatHeader
+                isDmMode={isDmMode}
+                dmPartnerName={dmPartnerName}
+                selectedServer={selectedServer}
+                isMobile={isMobile}
+                isDesktop={isDesktop}
+                showReconnecting={showReconnecting}
+                callState={webrtc.callState}
+                unreadDmCount={unreadDmCount}
+                unreadServerCount={unreadServers.size}
+                activeConversation={activeConversation}
+                onToggleServerSidebar={() => setShowServerSidebar(true)}
+                onToggleUserSidebar={() => setShowUserSidebar(true)}
+                onOpenSettings={() => setIsServerSettingsOpen(true)}
+                onStartCall={startDmCall}
+              />
+
+              {/* Active call minimized bar */}
+              {callMinimized && (webrtc.callState.status === "connected" || webrtc.callState.status === "calling") && (
+                <ActiveCallOverlay
+                  callState={webrtc.callState}
+                  onHangUp={() => webrtc.hangUp()}
+                  onToggleMute={() => webrtc.toggleMute()}
+                  onToggleVideo={() => webrtc.toggleVideo()}
+                  minimized={true}
+                  onToggleMinimize={() => setCallMinimized(false)}
+                />
+              )}
+
+              {/* Voice Channel Panel - server mode only */}
+              {!isDmMode && selectedServer && token && (
+                <VoiceChannelPanel
+                  token={token}
+                  serverId={selectedServer.id}
+                  userId={userId || 0}
+                  logout={logout}
+                  voiceState={voiceChannel.voiceState}
+                  onJoinChannel={async (channelId) => {
+                    try {
+                      await voiceChannel.joinChannel(channelId);
+                    } catch (err: any) {
+                      showSnackbarRef.current(err.message || "Failed to join voice channel. HTTPS required for non-localhost.");
+                    }
+                  }}
+                  onLeaveChannel={() => voiceChannel.leaveChannel()}
+                  onToggleMute={() => voiceChannel.toggleMute()}
+                />
+              )}
 
               {/* Messages List */}
               <KeyboardAvoidingView
@@ -1686,121 +2132,36 @@ const ChatPage: React.FC = () => {
                   )}
                 </YStack>
 
-                {/* Typing Indicator */}
-                {activeTypingUsers.size > 0 && (
-                  <XStack
-                    paddingHorizontal={isMobile ? "$3" : "$4"}
-                    paddingVertical="$1"
-                    backgroundColor="#36393f"
-                  >
-                    <Text color="#72767d" fontSize="$2" fontStyle="italic">
-                      {(() => {
-                        const names = Array.from(activeTypingUsers.values());
-                        if (names.length === 1) return `${names[0]} is typing...`;
-                        if (names.length === 2) return `${names[0]} and ${names[1]} are typing...`;
-                        return `${names[0]} and ${names.length - 1} others are typing...`;
-                      })()}
-                    </Text>
-                  </XStack>
-                )}
+                <TypingIndicator typingUsers={activeTypingUsers} isMobile={isMobile} />
 
-                {/* Input Box */}
-                {(!isDmMode && (!canSendMessages || channelPermissionDenied)) ? (
-                  <XStack
-                    padding={isMobile ? "$2" : "$3"}
-                    paddingBottom={Platform.OS === "ios" ? insets.bottom : (isMobile ? "$2" : "$3")}
-                    backgroundColor="#2f3136"
-                    borderTopWidth={1}
-                    borderTopColor="#202225"
-                    alignItems="center"
-                    justifyContent="center"
-                  >
-                    <YStack
-                      flex={1}
-                      backgroundColor="rgba(255, 152, 0, 0.1)"
-                      borderWidth={1}
-                      borderColor="rgba(255, 152, 0, 0.3)"
-                      borderRadius="$4"
-                      padding="$3"
-                      alignItems="center"
-                    >
-                      <Text color="#ff9800" fontSize={isMobile ? "$3" : "$2"} textAlign="center">
-                        You do not have permission to send messages in this channel.
-                      </Text>
-                    </YStack>
-                  </XStack>
-                ) : (
-                  <XStack
-                    padding={isMobile ? "$2" : "$3"}
-                    paddingBottom={Platform.OS === "ios" ? insets.bottom : (isMobile ? "$2" : "$3")}
-                    backgroundColor="#2f3136"
-                    borderTopWidth={1}
-                    borderTopColor="#202225"
-                    alignItems="flex-end"
-                    gap="$2"
-                  >
-                    <Input
-                      flex={1}
-                      placeholder={isDmMode && activeConversation
-                        ? `Message ${getConversationDisplayName(activeConversation)}`
-                        : selectedServer
-                          ? `Message ${selectedServer.name}`
-                          : "Type a message..."
-                      }
-                      value={input}
-                      onChangeText={handleInputChange}
-                      multiline
-                      numberOfLines={1}
-                      maxLength={2000}
-                      backgroundColor="#40444b"
-                      borderWidth={0}
-                      color="white"
-                      borderRadius="$4"
-                      padding={isMobile ? "$3" : "$3"}
-                      fontSize={isMobile ? "$4" : "$3"}
-                      onSubmitEditing={isMobile ? undefined : handleSend}
-                    />
-                    <Button
-                      backgroundColor="#5865F2"
-                      onPress={handleSend}
-                      disabled={!input.trim()}
-                      pressStyle={{
-                        backgroundColor: "#4752c4",
-                      }}
-                      disabledStyle={{
-                        opacity: 0.5,
-                      }}
-                      size={isMobile ? "$4" : "$3"}
-                      icon={isMobile ? <Send size={20} color="white" /> : undefined}
-                    >
-                      {!isMobile && "Send"}
-                    </Button>
-                  </XStack>
-                )}
+                <ChatInput
+                  input={input}
+                  onInputChange={handleInputChange}
+                  onSend={handleSend}
+                  onPickFile={handlePickFile}
+                  onCancelAttachment={cancelAttachment}
+                  pendingAttachment={pendingAttachment}
+                  isUploading={isUploading}
+                  canSendMessages={canSendMessages}
+                  channelPermissionDenied={channelPermissionDenied}
+                  isMobile={isMobile}
+                  isDmMode={isDmMode}
+                  selectedServer={selectedServer}
+                  activeConversation={activeConversation}
+                  getConversationDisplayName={getConversationDisplayName}
+                  bottomInset={insets.bottom}
+                />
               </KeyboardAvoidingView>
             </YStack>
           ) : (
-            <YStack
-              flex={1}
-              backgroundColor="#36393f"
-              justifyContent="center"
-              alignItems="center"
-              padding="$4"
-            >
-              {!isDesktop && (
-                <TouchableOpacity
-                  onPress={() => setShowServerSidebar(true)}
-                  style={{ position: 'absolute', top: 20 + insets.top, left: 20 }}
-                >
-                  <Menu size={28} color="#b9bbbe" />
-                </TouchableOpacity>
-              )}
-              <Text color="#72767d" fontSize={isMobile ? "$5" : "$6"} fontWeight="600" textAlign="center">
-                {servers.length === 0 && conversations.length === 0
-                  ? "Add friends or create a server to start chatting"
-                  : "Select a conversation to start chatting"}
-              </Text>
-            </YStack>
+            <EmptyState
+              isDesktop={isDesktop}
+              isMobile={isMobile}
+              topInset={insets.top}
+              hasServers={servers.length > 0}
+              hasConversations={conversations.length > 0}
+              onOpenSidebar={() => setShowServerSidebar(true)}
+            />
           )}
 
           {/* Right Sidebar - Desktop only, server mode only */}
@@ -1816,62 +2177,17 @@ const ChatPage: React.FC = () => {
           )}
         </XStack>
 
-        {/* Message Options Modal */}
-        <Modal
+        <MessageOptionsModal
           visible={menuVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setMenuVisible(false)}
-        >
-          <Pressable
-            style={{
-              flex: 1,
-              backgroundColor: "rgba(0,0,0,0.5)",
-              justifyContent: "center",
-              alignItems: "center",
-              padding: 20
-            }}
-            onPress={() => setMenuVisible(false)}
-          >
-            <Card
-              backgroundColor="#2f3136"
-              padding="$0"
-              borderRadius="$4"
-              width={isMobile ? "90%" : 200}
-              maxWidth={300}
-            >
-              <YStack>
-                {currentMessages.find((m) => m.id === menuMessageId)?.user_id === userId && (
-                  <Pressable
-                    onPress={() => {
-                      const msg = currentMessages.find((m) => m.id === menuMessageId);
-                      if (msg) handleEditClick(msg.id, msg.content);
-                    }}
-                  >
-                    <XStack
-                      padding={isMobile ? "$4" : "$3"}
-                      gap="$3"
-                      alignItems="center"
-                    >
-                      <Edit3 size={isMobile ? 20 : 16} color="white" />
-                      <Text color="white" fontSize={isMobile ? "$4" : "$3"}>Edit</Text>
-                    </XStack>
-                  </Pressable>
-                )}
-                <Pressable onPress={() => menuMessageId && handleDeleteClick(menuMessageId)}>
-                  <XStack
-                    padding={isMobile ? "$4" : "$3"}
-                    gap="$3"
-                    alignItems="center"
-                  >
-                    <Trash2 size={isMobile ? 20 : 16} color="#f04747" />
-                    <Text color="#f04747" fontSize={isMobile ? "$4" : "$3"}>Delete</Text>
-                  </XStack>
-                </Pressable>
-              </YStack>
-            </Card>
-          </Pressable>
-        </Modal>
+          isMobile={isMobile}
+          isOwnMessage={currentMessages.find((m) => m.id === menuMessageId)?.user_id === userId}
+          onClose={() => setMenuVisible(false)}
+          onEdit={() => {
+            const msg = currentMessages.find((m) => m.id === menuMessageId);
+            if (msg) handleEditClick(msg.id, msg.content);
+          }}
+          onDelete={() => menuMessageId && handleDeleteClick(menuMessageId)}
+        />
 
         {/* Settings Dialog - Only in server mode */}
         {isServerSettingsOpen && selectedServer && !isDmMode && (
@@ -1898,6 +2214,8 @@ const ChatPage: React.FC = () => {
             selectedServer={selectedServer}
             token={token}
             logout={logout}
+            isDmMode={isDmMode}
+            activeConversation={activeConversation}
           />
         )}
 
@@ -1913,25 +2231,61 @@ const ChatPage: React.FC = () => {
           refreshTrigger={friendsRefreshTrigger}
         />
 
-        {/* Snackbar */}
-        {snackbarVisible && (
+        {/* ─── Call UI ──────────────────────────────────────────── */}
+        <IncomingCallModal
+          visible={webrtc.callState.status === "ringing"}
+          callerName={webrtc.callState.remoteUsername || "Unknown"}
+          callType={webrtc.callState.callType}
+          onAccept={async () => {
+            setCallMinimized(false);
+            await webrtc.acceptCall();
+          }}
+          onReject={() => webrtc.rejectCall()}
+        />
+
+        {!callMinimized && (
+          <ActiveCallOverlay
+            callState={webrtc.callState}
+            onHangUp={() => webrtc.hangUp()}
+            onToggleMute={() => webrtc.toggleMute()}
+            onToggleVideo={() => webrtc.toggleVideo()}
+            minimized={false}
+            onToggleMinimize={() => setCallMinimized(true)}
+            audioDevices={webrtc.audioDevices}
+            selectedMicId={webrtc.selectedMicId}
+            selectedSpeakerId={webrtc.selectedSpeakerId}
+            onSelectMic={webrtc.switchMicrophone}
+            onSelectSpeaker={webrtc.switchSpeaker}
+            onRefreshDevices={webrtc.enumerateAudioDevices}
+          />
+        )}
+
+        {/* Call ended toast */}
+        {webrtc.callState.status === "ended" && (
           <Card
             position="absolute"
-            bottom={insets.bottom + 20}
+            top={100}
             alignSelf="center"
-            backgroundColor="#323232"
-            padding={isMobile ? "$4" : "$3"}
+            backgroundColor="#36393f"
+            borderWidth={1}
+            borderColor="#5865F2"
+            padding="$3"
             borderRadius="$4"
-            marginHorizontal="$4"
-            maxWidth={isMobile ? "90%" : 400}
             shadowColor="black"
             shadowOffset={{ width: 0, height: 4 }}
             shadowOpacity={0.3}
             shadowRadius={8}
           >
-            <Text color="white" fontSize={isMobile ? "$4" : "$3"}>{snackbarMessage}</Text>
+            <Text color="#b9bbbe" fontSize="$3">Call ended</Text>
           </Card>
         )}
+
+        <SnackbarToast
+          visible={snackbarVisible}
+          message={snackbarMessage}
+          bottomInset={insets.bottom}
+          isMobile={isMobile}
+        />
       </YStack>
     </Theme>
   );

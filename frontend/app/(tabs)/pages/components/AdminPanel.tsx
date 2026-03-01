@@ -9,11 +9,9 @@ import {
   banUser as banUserApi,
   fetchBannedUsers,
   unbanUser as unbanUserApi,
-  fetchRoles,
-  assignRole,
-  unassignRole,
-} from "../../utils/api";
-import { useAuth } from "../../utils/AuthContext";
+  fetchRoles
+} from "../../../../utils/api";
+import { useAuth } from "../../../../utils/AuthContext";
 
 interface Role {
   id: number;
@@ -134,27 +132,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       });
   }, [token, serverId, logout]);
 
-  const handleRoleChange = async (userId: number, roleIds: number[]) => {
-    const prevRoles = userRolesMap[userId] || [];
-    const toAssign = roleIds.filter((id) => !prevRoles.includes(id));
-    const toUnassign = prevRoles.filter((id) => !roleIds.includes(id));
-
-    try {
-      await Promise.all([
-        ...toAssign.map((roleId) => assignRole(token, serverId, userId, roleId, logout)),
-        ...toUnassign.map((roleId) => unassignRole(token, serverId, userId, roleId, logout)),
-      ]);
-
-      setUserRolesMap((prev) => ({
-        ...prev,
-        [userId]: roleIds,
-      }));
-      showToast("Roles updated");
-    } catch (err: any) {
-      showToast("Failed to update roles");
-    }
-  };
-
   useEffect(() => {
     if (!serverId || !token) return;
     setLoading(true);
@@ -175,7 +152,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         setCanKick(isOwner || permissions.includes("KICK_MEMBERS"));
         setCanBan(isOwner || permissions.includes("BAN_MEMBERS"));
       } catch {
-        // If we can't load permissions, fall back to owner check only
+        // If can't load permissions, fall back to owner check only
         const isOwner = userId === selectedServerOwnerId;
         setCanKick(isOwner);
         setCanBan(isOwner);

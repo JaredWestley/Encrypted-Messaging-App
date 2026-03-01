@@ -2,8 +2,8 @@ import React, { useEffect, useState } from "react";
 import { YStack, XStack, Text, Button, Spinner, Separator } from "tamagui";
 import { Modal, TouchableOpacity, Image } from "react-native";
 import { X } from "@tamagui/lucide-icons";
-import { fetchUsersInServer } from "../../utils/api";
-import { BASE_URL } from "../../utils/config";
+import { fetchUsersInServer } from "../../../../utils/api";
+import { BASE_URL } from "../../../../utils/config";
 
 interface User {
   id: number;
@@ -23,6 +23,21 @@ interface Server {
   icon_url?: string;
 }
 
+interface ConversationMember {
+  id: number;
+  username: string;
+  icon_url?: string;
+  created_at: string;
+}
+
+interface ActiveConversation {
+  id: number;
+  name?: string;
+  is_group: boolean;
+  created_at: string;
+  members: ConversationMember[];
+}
+
 interface UserProfileDialogProps {
   open: boolean;
   user: User | null;
@@ -31,6 +46,8 @@ interface UserProfileDialogProps {
   selectedServer: Server | null;
   token: string;
   logout: () => void;
+  isDmMode?: boolean;
+  activeConversation?: ActiveConversation | null;
 }
 
 const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
@@ -41,6 +58,8 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
   selectedServer,
   token,
   logout,
+  isDmMode = false,
+  activeConversation = null,
 }) => {
   const serverId = selectedServer?.id ?? 0;
   const [detailedUser, setDetailedUser] = useState<ServerUser | null>(null);
@@ -53,6 +72,23 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
       return;
     }
 
+    // In DM mode, get user icon from conversation members
+    if (isDmMode && activeConversation) {
+      const member = activeConversation.members.find((m) => m.id === user.id);
+      if (member) {
+        setDetailedUser({
+          id: member.id,
+          username: member.username,
+          icon_url: member.icon_url ?? null,
+        });
+      } else {
+        setDetailedUser({ ...user, icon_url: null });
+      }
+      setLoading(false);
+      return;
+    }
+
+    // In server mode, fetch from server users endpoint
     const loadUserDetails = async () => {
       try {
         setLoading(true);
@@ -68,7 +104,7 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
     };
 
     loadUserDetails();
-  }, [open, user, token, serverId, logout]);
+  }, [open, user, token, serverId, logout, isDmMode, activeConversation]);
 
   if (!user) return null;
 
@@ -123,7 +159,7 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
             ) : (
               <>
                 {/* User Info */}
-                <XStack alignItems="center" marginTop="$2">
+                <XStack alignItems="center">
                   {displayUser.icon_url ? (
                     <Image
                       source={{ uri: `${BASE_URL}${displayUser.icon_url}` }}
@@ -143,7 +179,7 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
                       </Text>
                     </YStack>
                   )}
-                  <YStack flex={1}>
+                  <YStack flex={1} paddingLeft={8}>
                     <Text fontSize="$7" fontWeight="700" color="white">
                       {displayUser.username}
                     </Text>
@@ -157,7 +193,7 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
                 <Separator borderColor="#202225" marginVertical="$2" />
 
                 {/* About Section */}
-                <YStack>
+                <YStack paddingTop={4}>
                   <Text
                     fontSize="$2"
                     fontWeight="700"
@@ -167,7 +203,7 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
                   >
                     About
                   </Text>
-                  <Text fontSize="$3" color="#dcddde" lineHeight={20}>
+                  <Text fontSize="$3" color="#dcddde" lineHeight={20} paddingTop={4}>
                     This is a placeholder for more user information, such as bio, roles, or
                     recent activity.
                   </Text>

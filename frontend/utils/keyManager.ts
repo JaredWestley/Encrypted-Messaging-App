@@ -22,6 +22,7 @@ export async function getOrCreateKeyPair(): Promise<{
   const existingPublic = await getSecureItem(PUBLIC_KEY_STORAGE_KEY);
 
   if (existingPrivate && existingPublic) {
+    console.log(`[KeyDebug] getOrCreateKeyPair: RETRIEVED existing keypair from secure storage (pub=${existingPublic.substring(0, 20)}...)`);
     return {
       publicKey: decodeBase64(existingPublic),
       secretKey: decodeBase64(existingPrivate),
@@ -29,10 +30,12 @@ export async function getOrCreateKeyPair(): Promise<{
   }
 
   // Generate new keypair
+  console.log(`[KeyDebug] getOrCreateKeyPair: GENERATING new keypair (no existing keys in storage)`);
   const keyPair = generateKeyPair();
 
   await setSecureItem(PRIVATE_KEY_STORAGE_KEY, encodeBase64(keyPair.secretKey));
   await setSecureItem(PUBLIC_KEY_STORAGE_KEY, encodeBase64(keyPair.publicKey));
+  console.log(`[KeyDebug] getOrCreateKeyPair: stored new keypair (pub=${encodeBase64(keyPair.publicKey).substring(0, 20)}...)`);
 
   return {
     publicKey: keyPair.publicKey,
@@ -62,13 +65,19 @@ export async function clearKeys(): Promise<void> {
 
 /** Store a decrypted server key in secure storage */
 export async function storeServerKey(serverId: number, serverKey: Uint8Array): Promise<void> {
-  await setSecureItem(`server_key_${serverId}`, encodeBase64(serverKey));
+  const b64 = encodeBase64(serverKey);
+  console.log(`[KeyDebug] storeServerKey(${serverId}): storing ${b64.length} chars`);
+  await setSecureItem(`server_key_${serverId}`, b64);
 }
 
 /** Get a cached server key from secure storage */
 export async function getServerKey(serverId: number): Promise<Uint8Array | null> {
   const stored = await getSecureItem(`server_key_${serverId}`);
-  if (!stored) return null;
+  if (!stored) {
+    console.log(`[KeyDebug] getServerKey(${serverId}): not found in storage`);
+    return null;
+  }
+  console.log(`[KeyDebug] getServerKey(${serverId}): found (${stored.length} chars)`);
   return decodeBase64(stored);
 }
 

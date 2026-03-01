@@ -3,7 +3,6 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.errors import RateLimitExceeded
 
 from app.routes import router
 from app.database import init_db

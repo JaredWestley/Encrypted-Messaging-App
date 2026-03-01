@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { YStack, XStack, Text, ScrollView, Spinner } from "tamagui";
+import { YStack, XStack, Text, ScrollView, Spinner, Separator } from "tamagui";
 import { TouchableOpacity, Image } from "react-native";
 import { X } from "@tamagui/lucide-icons";
-import { fetchUsersInServer } from "../../utils/api";
-import { BASE_URL } from "../../utils/config";
+import { fetchUsersInServer } from "../../../../utils/api";
+import { BASE_URL } from "../../../../utils/config";
 
 interface User {
   id: number;
@@ -117,46 +117,49 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
         <ScrollView flex={1}>
           <YStack padding="$2">
             {users.map((user) => (
-              <TouchableOpacity key={user.id} onPress={() => onUserClick(user)}>
-                <XStack
-                  paddingVertical="$2"
-                  paddingHorizontal="$2"
-                  borderRadius="$2"
-                  alignItems="center"
-                  gap="$2"
-                  pressStyle={{
-                    backgroundColor: "#40444b",
-                  }}
-                >
-                  {user.icon_url ? (
-                    <Image
-                      source={{ uri: `${BASE_URL}${user.icon_url}` }}
-                      style={{ width: 32, height: 32, borderRadius: 16 }}
-                    />
-                  ) : (
-                    <YStack
-                      width={32}
-                      height={32}
-                      borderRadius={16}
-                      backgroundColor="#757575"
-                      justifyContent="center"
-                      alignItems="center"
-                    >
-                      <Text color="white" fontSize="$2" fontWeight="600">
-                        {getFirstLetter(user.username)}
-                      </Text>
-                    </YStack>
-                  )}
-                  <Text
-                    color="#b9bbbe"
-                    fontSize="$3"
-                    flex={1}
-                    numberOfLines={1}
+              <YStack>
+                <TouchableOpacity key={user.id} onPress={() => onUserClick(user)}>
+                  <XStack
+                    paddingVertical="$2"
+                    paddingHorizontal="$2"
+                    borderRadius="$2"
+                    alignItems="center"
+                    gap="$2"
+                    pressStyle={{
+                      backgroundColor: "#40444b",
+                    }}
                   >
-                    {user.username}
-                  </Text>
-                </XStack>
-              </TouchableOpacity>
+                    {user.icon_url ? (
+                      <Image
+                        source={{ uri: `${BASE_URL}${user.icon_url}` }}
+                        style={{ width: 32, height: 32, borderRadius: 16 }}
+                      />
+                    ) : (
+                      <YStack
+                        width={32}
+                        height={32}
+                        borderRadius={16}
+                        backgroundColor="#757575"
+                        justifyContent="center"
+                        alignItems="center"
+                      >
+                        <Text color="white" fontSize="$2" fontWeight="600">
+                          {getFirstLetter(user.username)}
+                        </Text>
+                      </YStack>
+                    )}
+                    <Text
+                      color="#b9bbbe"
+                      fontSize="$3"
+                      flex={1}
+                      numberOfLines={1}
+                    >
+                      {user.username}
+                    </Text>
+                  </XStack>
+                </TouchableOpacity>
+                <Separator backgroundColor="#5b5f66" marginBottom="$2" marginTop={"$2"}/>
+              </YStack>
             ))}
           </YStack>
         </ScrollView>

@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from datetime import datetime
-from pydantic import validator
+from pydantic import field_validator
 
 
 class UserCreate(BaseModel):
@@ -44,6 +44,7 @@ class MessageCreate(BaseModel):
     is_encrypted: bool = False
     nonce: Optional[str] = None
     sender_public_key: Optional[str] = None
+    attachment_id: Optional[int] = None
 
 class MessageUpdate(BaseModel):
     content: str
@@ -64,9 +65,9 @@ class RoleRead(BaseModel):
     is_default: bool = False
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
-    @validator('permissions', pre=True, always=True)
+    @field_validator('permissions', mode="before")
     def extract_permissions(cls, v, values):
         # v will be the list of RolePermission ORM objects
         if isinstance(v, list) and v and hasattr(v[0], 'permission'):
@@ -90,10 +91,10 @@ class ServerRead(BaseModel):
     id: int
     name: str
     owner_id: int
-    icon_url: Optional[str] = None  # Add this
+    icon_url: Optional[str] = None 
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ServerUpdate(BaseModel):
@@ -111,7 +112,7 @@ class FriendshipRead(BaseModel):
     friend: Optional[PublicUserRead] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class FriendRequestCreate(BaseModel):
     friend_username: str
@@ -124,13 +125,14 @@ class ConversationRead(BaseModel):
     members: List[PublicUserRead] = []
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class DirectMessageCreate(BaseModel):
     content: str
     is_encrypted: bool = False
     nonce: Optional[str] = None
     sender_public_key: Optional[str] = None
+    attachment_id: Optional[int] = None
 
 class DirectMessageRead(BaseModel):
     id: int
@@ -144,7 +146,7 @@ class DirectMessageRead(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 # ─── Encryption ──────────────────────────────────────────────────
@@ -166,3 +168,38 @@ class ServerKeyRead(BaseModel):
     encrypted_key: str
     nonce: str
     encrypted_by: Optional[int] = None  # User ID of who encrypted this key
+
+
+# ─── Voice Channels ──────────────────────────────────────────────
+
+class VoiceChannelCreate(BaseModel):
+    name: str
+    user_limit: int = 8
+
+class VoiceChannelRead(BaseModel):
+    id: int
+    server_id: int
+    name: str
+    position: int
+    user_limit: int
+    connected_users: List[PublicUserRead] = []
+
+    class Config:
+        from_attributes = True
+
+
+class AttachmentRead(BaseModel):
+    id: int
+    original_filename: str
+    mime_type: str
+    file_size: int
+    encryption_nonce: str
+    file_key_encrypted: Optional[str] = None
+    file_key_nonce: Optional[str] = None
+    sender_file_key_encrypted: Optional[str] = None
+    sender_file_key_nonce: Optional[str] = None
+    uploader_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

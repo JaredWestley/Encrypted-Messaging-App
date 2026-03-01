@@ -9,10 +9,10 @@ import {
   Theme,
   Spinner,
 } from "tamagui";
-import { Alert, KeyboardAvoidingView, Platform } from "react-native";
+import { KeyboardAvoidingView, Platform } from "react-native";
 import { User, Lock, Eye, EyeOff } from "@tamagui/lucide-icons";
-import { loginUser } from "../utils/api";
-import { useAuth } from "../utils/AuthContext";
+import { loginUser } from "../../../utils/api";
+import { useAuth } from "../../../utils/AuthContext";
 import { useRouter } from 'expo-router';
 
 const LoginPage: React.FC = () => {
@@ -80,13 +80,13 @@ const LoginPage: React.FC = () => {
             <YStack>
               {/* Title */}
               <Text
-                fontSize="$9"
+                fontSize="$8"
                 fontWeight="700"
                 color="white"
                 textAlign="center"
                 marginBottom="$2"
               >
-                Welcome Back
+                Encrypted Messaging App
               </Text>
 
               {/* Error Alert */}
@@ -107,7 +107,7 @@ const LoginPage: React.FC = () => {
               )}
 
               {/* Username Input */}
-              <YStack>
+              <YStack marginTop="$4">
                 <XStack
                   backgroundColor="#202225"
                   borderRadius="$2"
@@ -115,10 +115,11 @@ const LoginPage: React.FC = () => {
                   paddingVertical="$2"
                   alignItems="center"
                 >
-                  <User size={20} color="#5865F2" />
+                  <User size={20} color="#5865F2" marginRight={"$2"}/>
                   <Input
                     flex={1}
                     placeholder="Username"
+                    //@ts-ignore
                     placeholderTextColor="#72767d"
                     value={username}
                     onChangeText={setUsername}
@@ -131,7 +132,6 @@ const LoginPage: React.FC = () => {
                     borderWidth={0}
                     color="white"
                     fontSize="$4"
-                    padding={0}
                     focusStyle={{
                       borderWidth: 0,
                     }}
@@ -140,7 +140,7 @@ const LoginPage: React.FC = () => {
               </YStack>
 
               {/* Password Input */}
-              <YStack>
+              <YStack marginTop="$2" marginBottom="$4">
                 <XStack
                   backgroundColor="#202225"
                   borderRadius="$2"
@@ -148,10 +148,11 @@ const LoginPage: React.FC = () => {
                   paddingVertical="$2"
                   alignItems="center"
                 >
-                  <Lock size={20} color="#5865F2" />
+                  <Lock size={20} color="#5865F2" marginRight={"$2"}/>
                   <Input
                     flex={1}
                     placeholder="Password"
+                    //@ts-ignore
                     placeholderTextColor="#72767d"
                     value={password}
                     onChangeText={setPassword}
@@ -165,15 +166,17 @@ const LoginPage: React.FC = () => {
                     borderWidth={0}
                     color="white"
                     fontSize="$4"
-                    padding={0}
                     focusStyle={{
                       borderWidth: 0,
                     }}
                   />
                   <Button
-                    unstyled
+                    backgroundColor={"$color.gray5Dark"}
+                    borderWidth={1}
+                    borderColor="#5865F2"
                     onPress={togglePasswordVisibility}
-                    padding="$2"
+                    padding="$2.5"
+                    marginLeft={"$2"}
                     pressStyle={{
                       opacity: 0.7,
                     }}
@@ -207,20 +210,24 @@ const LoginPage: React.FC = () => {
               </Button>
 
               {/* Register Link */}
-              <XStack justifyContent="center" marginTop="$2">
+              <XStack justifyContent="center" marginTop="$3">
                 <Text color="#b9bbbe" fontSize="$3">
                   Don't have an account?
                 </Text>
+              </XStack>
+              <XStack justifyContent="center">
                 <Text
                   color="#5865F2"
                   fontWeight="700"
                   fontSize="$3"
-                  onPress={() => router.push("/(tabs)/pages/Register")}
+                  onPress={() => router.replace("/pages/Register")}
                   pressStyle={{
                     opacity: 0.7,
                   }}
                 >
-                  Register
+                  <Button.Text>
+                    Register
+                  </Button.Text>
                 </Text>
               </XStack>
             </YStack>

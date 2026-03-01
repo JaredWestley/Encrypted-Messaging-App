@@ -13,7 +13,7 @@ SERVER_PERMISSIONS = [
 ]
 
 def is_server_owner(user: User, server_id: int, session: Session) -> bool:
-    """Check if the user is the owner of the given server."""
+    #Check if the user is the owner of the given server.
     server = session.get(Server, server_id)
     if not server:
         return False

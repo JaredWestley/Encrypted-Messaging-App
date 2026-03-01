@@ -29,7 +29,7 @@ export interface Role {
   name: string;
   permissions: string[];
   users: { id: number; username: string }[];
-  is_default?: boolean; // Add this line
+  is_default?: boolean;
 }
 
 export async function apiRequest<T>(
@@ -158,13 +158,14 @@ export async function sendMessage(
   serverId: number,
   userId: number,
   logout: () => void,
-  encryption?: { is_encrypted: boolean; nonce: string; sender_public_key: string }
+  encryption?: { is_encrypted: boolean; nonce: string; sender_public_key: string; attachment_id?: number }
 ) {
   const body: any = { content, server_id: serverId, user_id: userId };
   if (encryption) {
     body.is_encrypted = encryption.is_encrypted;
     body.nonce = encryption.nonce;
     body.sender_public_key = encryption.sender_public_key;
+    if (encryption.attachment_id) body.attachment_id = encryption.attachment_id;
   }
   return apiRequest(`${API_URL}/messages`, {
     method: "POST",
@@ -658,13 +659,14 @@ export async function sendDirectMessage(
   conversationId: number,
   content: string,
   logout: () => void,
-  encryption?: { is_encrypted: boolean; nonce: string; sender_public_key: string }
+  encryption?: { is_encrypted: boolean; nonce: string; sender_public_key: string; attachment_id?: number }
 ): Promise<DirectMessageData> {
   const body: any = { content };
   if (encryption) {
     body.is_encrypted = encryption.is_encrypted;
     body.nonce = encryption.nonce;
     body.sender_public_key = encryption.sender_public_key;
+    if (encryption.attachment_id) body.attachment_id = encryption.attachment_id;
   }
   return apiRequest<DirectMessageData>(`${API_URL}/conversations/${conversationId}/messages`, {
     method: "POST",
@@ -813,6 +815,71 @@ export async function uploadServerKeys(
   }, logout);
 }
 
+// ─── File Attachments ────────────────────────────────────────────
+
+export interface AttachmentData {
+  id: number;
+  original_filename: string;
+  mime_type: string;
+  file_size: number;
+  encryption_nonce: string;
+  file_key_encrypted?: string | null;
+  file_key_nonce?: string | null;
+  sender_file_key_encrypted?: string | null;
+  sender_file_key_nonce?: string | null;
+  uploader_id?: number;
+  created_at?: string;
+}
+
+export async function uploadAttachment(
+  formData: FormData,
+  token: string,
+  logout: () => void
+): Promise<AttachmentData> {
+  return apiRequest<AttachmentData>(`${API_URL}/attachments/upload`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  }, logout);
+}
+
+export async function downloadAttachment(
+  attachmentId: number,
+  token: string,
+  logout: () => void
+): Promise<{
+  bytes: ArrayBuffer;
+  nonce: string;
+  fileKeyEncrypted?: string;
+  fileKeyNonce?: string;
+  mimeType: string;
+  filename: string;
+}> {
+  const res = await fetch(`${API_URL}/attachments/${attachmentId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (res.status === 401) {
+    logout();
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) {
+    throw new Error("Failed to download attachment");
+  }
+
+  const bytes = await res.arrayBuffer();
+  return {
+    bytes,
+    nonce: res.headers.get("X-Encryption-Nonce") || "",
+    fileKeyEncrypted: res.headers.get("X-File-Key-Encrypted") || undefined,
+    fileKeyNonce: res.headers.get("X-File-Key-Nonce") || undefined,
+    mimeType: res.headers.get("X-Mime-Type") || "application/octet-stream",
+    filename: res.headers.get("X-Original-Filename") || "download",
+  };
+}
+
 export async function fetchServerMemberPublicKeys(
   token: string,
   serverId: number,
@@ -821,6 +888,62 @@ export async function fetchServerMemberPublicKeys(
   return apiRequest<PublicKeyData[]>(
     `${API_URL}/keys/server/${serverId}/members`,
     { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+// ─── Voice Channels ──────────────────────────────────────────────
+
+export interface VoiceChannelData {
+  id: number;
+  server_id: number;
+  name: string;
+  position: number;
+  user_limit: number;
+  connected_users: Array<{ id: number; username: string; icon_url?: string | null }>;
+}
+
+export async function fetchVoiceChannels(
+  token: string,
+  serverId: number,
+  logout: () => void
+): Promise<VoiceChannelData[]> {
+  return apiRequest<VoiceChannelData[]>(
+    `${API_URL}/servers/${serverId}/voice-channels`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+export async function createVoiceChannel(
+  token: string,
+  serverId: number,
+  name: string,
+  userLimit: number = 8,
+  logout: () => void
+): Promise<VoiceChannelData> {
+  return apiRequest<VoiceChannelData>(
+    `${API_URL}/servers/${serverId}/voice-channels`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name, user_limit: userLimit }),
+    },
+    logout
+  );
+}
+
+export async function deleteVoiceChannel(
+  token: string,
+  channelId: number,
+  logout: () => void
+): Promise<void> {
+  await apiRequest<any>(
+    `${API_URL}/voice-channels/${channelId}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
     logout
   );
 }

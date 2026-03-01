@@ -6,8 +6,7 @@ import {
   Input,
   Button,
   Card,
-  ScrollView,
-  Separator,
+  ScrollView
 } from "tamagui";
 import {
   TouchableOpacity,
@@ -22,9 +21,8 @@ import {
   Users,
   MessageCircle,
   Trash2,
-  ChevronLeft,
   Clock,
-  Send,
+  Send
 } from "@tamagui/lucide-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -36,10 +34,10 @@ import {
   rejectFriendRequest,
   removeFriend,
   createOrGetConversation,
-  FriendshipData,
-} from "../../utils/api";
-import { useAuth } from "../../utils/AuthContext";
-import { BASE_URL } from "../../utils/config";
+  FriendshipData
+} from "../../../../utils/api";
+import { useAuth } from "../../../../utils/AuthContext";
+import { BASE_URL } from "../../../../utils/config";
 
 interface FriendsListProps {
   open: boolean;
@@ -445,6 +443,7 @@ const FriendsList: React.FC<FriendsListProps> = ({
                         backgroundColor={activeTab === tab.key ? "#5865F2" : "#40444b"}
                         borderRadius={10}
                         paddingHorizontal="$1.5"
+                        marginLeft="$1"
                         minWidth={20}
                         alignItems="center"
                       >

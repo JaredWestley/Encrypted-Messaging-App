@@ -8,8 +8,9 @@ interface DmWebSocketMessage {
 
 interface UseDmWebSocketOptions {
   token: string | null;
+  refreshAccessToken?: () => Promise<boolean>;
   onDmNewMessage?: (conversationId: number, message: any) => void;
-  onDmMessageEdited?: (conversationId: number, messageId: number, content: string) => void;
+  onDmMessageEdited?: (conversationId: number, messageId: number, content: string, isEncrypted?: boolean, nonce?: string, senderPublicKey?: string) => void;
   onDmMessageDeleted?: (conversationId: number, messageId: number) => void;
   onDmTyping?: (conversationId: number, userId: number, username: string) => void;
   onDmStopTyping?: (conversationId: number, userId: number) => void;
@@ -18,10 +19,17 @@ interface UseDmWebSocketOptions {
   onServerNotification?: (serverId: number) => void;
   onKeyRedistributionNeeded?: (serverId: number) => void;
   onConnectionChange?: (connected: boolean) => void;
+  // Call signaling callbacks
+  onCallOffer?: (fromUserId: number, fromUsername: string, offer: string, callType: "voice" | "video", callId: string) => void;
+  onCallAnswer?: (fromUserId: number, answer: string, callId: string) => void;
+  onCallIceCandidate?: (fromUserId: number, candidate: any, callId: string) => void;
+  onCallReject?: (fromUserId: number, callId: string) => void;
+  onCallHangup?: (fromUserId: number, callId: string) => void;
 }
 
 export function useDmWebSocket({
   token,
+  refreshAccessToken,
   onDmNewMessage,
   onDmMessageEdited,
   onDmMessageDeleted,
@@ -32,6 +40,11 @@ export function useDmWebSocket({
   onServerNotification,
   onKeyRedistributionNeeded,
   onConnectionChange,
+  onCallOffer,
+  onCallAnswer,
+  onCallIceCandidate,
+  onCallReject,
+  onCallHangup,
 }: UseDmWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -54,6 +67,11 @@ export function useDmWebSocket({
     onServerNotification,
     onKeyRedistributionNeeded,
     onConnectionChange,
+    onCallOffer,
+    onCallAnswer,
+    onCallIceCandidate,
+    onCallReject,
+    onCallHangup,
   });
   callbacksRef.current = {
     onDmNewMessage,
@@ -66,6 +84,11 @@ export function useDmWebSocket({
     onServerNotification,
     onKeyRedistributionNeeded,
     onConnectionChange,
+    onCallOffer,
+    onCallAnswer,
+    onCallIceCandidate,
+    onCallReject,
+    onCallHangup,
   };
 
   const cleanup = useCallback(() => {
@@ -121,6 +144,10 @@ export function useDmWebSocket({
           console.error("DM WebSocket auth error:", data.message);
           setIsConnecting(false);
           ws.close();
+          // Try refreshing the token — the hook will reconnect when token changes
+          if (refreshAccessToken) {
+            refreshAccessToken().catch(() => {});
+          }
           return;
         }
 
@@ -129,7 +156,7 @@ export function useDmWebSocket({
             callbacks.onDmNewMessage?.(data.conversation_id, data.message);
             break;
           case "dm_message_edited":
-            callbacks.onDmMessageEdited?.(data.conversation_id, data.message_id, data.content);
+            callbacks.onDmMessageEdited?.(data.conversation_id, data.message_id, data.content, data.is_encrypted, data.nonce, data.sender_public_key);
             break;
           case "dm_message_deleted":
             callbacks.onDmMessageDeleted?.(data.conversation_id, data.message_id);
@@ -151,6 +178,22 @@ export function useDmWebSocket({
             break;
           case "key_redistribution_needed":
             callbacks.onKeyRedistributionNeeded?.(data.server_id);
+            break;
+          // Call signaling
+          case "call_offer":
+            callbacks.onCallOffer?.(data.from_user_id, data.from_username, data.offer, data.call_type, data.call_id);
+            break;
+          case "call_answer":
+            callbacks.onCallAnswer?.(data.from_user_id, data.answer, data.call_id);
+            break;
+          case "call_ice_candidate":
+            callbacks.onCallIceCandidate?.(data.from_user_id, data.candidate, data.call_id);
+            break;
+          case "call_reject":
+            callbacks.onCallReject?.(data.from_user_id, data.call_id);
+            break;
+          case "call_hangup":
+            callbacks.onCallHangup?.(data.from_user_id, data.call_id);
             break;
         }
       } catch {
@@ -211,10 +254,46 @@ export function useDmWebSocket({
     }
   }, []);
 
+  // ─── Call signaling send functions ─────────────────────────────
+  const sendCallOffer = useCallback((toUserId: number, offer: string, callType: "voice" | "video", callId: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "call_offer", to_user_id: toUserId, offer, call_type: callType, call_id: callId }));
+    }
+  }, []);
+
+  const sendCallAnswer = useCallback((toUserId: number, answer: string, callId: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "call_answer", to_user_id: toUserId, answer, call_id: callId }));
+    }
+  }, []);
+
+  const sendCallIceCandidate = useCallback((toUserId: number, candidate: any, callId: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "call_ice_candidate", to_user_id: toUserId, candidate, call_id: callId }));
+    }
+  }, []);
+
+  const sendCallReject = useCallback((toUserId: number, callId: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "call_reject", to_user_id: toUserId, call_id: callId }));
+    }
+  }, []);
+
+  const sendCallHangup = useCallback((toUserId: number, callId: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "call_hangup", to_user_id: toUserId, call_id: callId }));
+    }
+  }, []);
+
   return {
     isConnected,
     isConnecting,
     sendDmTyping,
     sendDmStopTyping,
+    sendCallOffer,
+    sendCallAnswer,
+    sendCallIceCandidate,
+    sendCallReject,
+    sendCallHangup,
   };
 }

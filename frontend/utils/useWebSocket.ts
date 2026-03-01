@@ -12,7 +12,7 @@ interface UseWebSocketOptions {
   serverId: number | null;
   token: string | null;
   onNewMessage?: (message: any) => void;
-  onMessageEdited?: (messageId: number, content: string) => void;
+  onMessageEdited?: (messageId: number, content: string, isEncrypted?: boolean, nonce?: string) => void;
   onMessageDeleted?: (messageId: number) => void;
   onTyping?: (userId: number, username: string, serverId?: number) => void;
   onStopTyping?: (userId: number, serverId?: number) => void;
@@ -23,6 +23,12 @@ interface UseWebSocketOptions {
   onKeyNeeded?: (serverId: number, userId: number) => void;
   onServerUpdated?: (serverId: number, name: string, iconUrl: string | null) => void;
   onUserUpdated?: (userId: number, username: string, iconUrl: string | null) => void;
+  onVoiceUserJoined?: (channelId: number, userId: number, username: string) => void;
+  onVoiceUserLeft?: (channelId: number, userId: number) => void;
+  onVoiceOffer?: (channelId: number, fromUserId: number, fromUsername: string, offer: any) => void;
+  onVoiceAnswer?: (channelId: number, fromUserId: number, answer: any) => void;
+  onVoiceIceCandidate?: (channelId: number, fromUserId: number, candidate: any) => void;
+  onVoiceChannelUsers?: (channelId: number, users: Array<{ user_id: number; username: string }>) => void;
 }
 
 export function useWebSocket({
@@ -40,6 +46,12 @@ export function useWebSocket({
   onKeyNeeded,
   onServerUpdated,
   onUserUpdated,
+  onVoiceUserJoined,
+  onVoiceUserLeft,
+  onVoiceOffer,
+  onVoiceAnswer,
+  onVoiceIceCandidate,
+  onVoiceChannelUsers,
 }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,6 +74,12 @@ export function useWebSocket({
     onKeyNeeded,
     onServerUpdated,
     onUserUpdated,
+    onVoiceUserJoined,
+    onVoiceUserLeft,
+    onVoiceOffer,
+    onVoiceAnswer,
+    onVoiceIceCandidate,
+    onVoiceChannelUsers,
   });
   callbacksRef.current = {
     onNewMessage,
@@ -76,6 +94,12 @@ export function useWebSocket({
     onKeyNeeded,
     onServerUpdated,
     onUserUpdated,
+    onVoiceUserJoined,
+    onVoiceUserLeft,
+    onVoiceOffer,
+    onVoiceAnswer,
+    onVoiceIceCandidate,
+    onVoiceChannelUsers,
   };
 
   const cleanup = useCallback(() => {
@@ -124,7 +148,7 @@ export function useWebSocket({
             callbacks.onNewMessage?.(data.message);
             break;
           case "message_edited":
-            callbacks.onMessageEdited?.(data.message_id, data.content);
+            callbacks.onMessageEdited?.(data.message_id, data.content, data.is_encrypted, data.nonce);
             break;
           case "message_deleted":
             callbacks.onMessageDeleted?.(data.message_id);
@@ -152,6 +176,24 @@ export function useWebSocket({
             break;
           case "user_updated":
             callbacks.onUserUpdated?.(data.user_id, data.username, data.icon_url);
+            break;
+          case "voice_user_joined":
+            callbacks.onVoiceUserJoined?.(data.channel_id, data.user_id, data.username);
+            break;
+          case "voice_user_left":
+            callbacks.onVoiceUserLeft?.(data.channel_id, data.user_id);
+            break;
+          case "voice_offer":
+            callbacks.onVoiceOffer?.(data.channel_id, data.from_user_id, data.from_username, data.offer);
+            break;
+          case "voice_answer":
+            callbacks.onVoiceAnswer?.(data.channel_id, data.from_user_id, data.answer);
+            break;
+          case "voice_ice_candidate":
+            callbacks.onVoiceIceCandidate?.(data.channel_id, data.from_user_id, data.candidate);
+            break;
+          case "voice_channel_users":
+            callbacks.onVoiceChannelUsers?.(data.channel_id, data.users);
             break;
         }
       } catch {
@@ -219,11 +261,46 @@ export function useWebSocket({
     }
   }, []);
 
+  const sendVoiceJoin = useCallback((channelId: number) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "voice_join", channel_id: channelId }));
+    }
+  }, []);
+
+  const sendVoiceLeave = useCallback((channelId: number) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "voice_leave", channel_id: channelId }));
+    }
+  }, []);
+
+  const sendVoiceOffer = useCallback((channelId: number, toUserId: number, offer: any) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "voice_offer", channel_id: channelId, to_user_id: toUserId, offer }));
+    }
+  }, []);
+
+  const sendVoiceAnswer = useCallback((channelId: number, toUserId: number, answer: any) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "voice_answer", channel_id: channelId, to_user_id: toUserId, answer }));
+    }
+  }, []);
+
+  const sendVoiceIceCandidate = useCallback((channelId: number, toUserId: number, candidate: any) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "voice_ice_candidate", channel_id: channelId, to_user_id: toUserId, candidate }));
+    }
+  }, []);
+
   return {
     isConnected,
     sendTyping,
     sendStopTyping,
     sendAck,
     sendKeyNeeded,
+    sendVoiceJoin,
+    sendVoiceLeave,
+    sendVoiceOffer,
+    sendVoiceAnswer,
+    sendVoiceIceCandidate,
   };
 }

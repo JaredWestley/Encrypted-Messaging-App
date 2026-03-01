@@ -2,8 +2,8 @@ import React, { useState } from "react";
 import { YStack, XStack, Text, Input, Button, Separator } from "tamagui";
 import { Alert as RNAlert, Image, Platform } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { renameServer, deleteServer, uploadServerIcon } from "../../utils/api";
-import { BASE_URL } from "../../utils/config";
+import { renameServer, deleteServer, uploadServerIcon } from "../../../../utils/api";
+import { BASE_URL } from "../../../../utils/config";
 
 interface ServerSettingsProps {
   serverId: number;
@@ -169,7 +169,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
       </Text>
 
       {/* Server Name */}
-      <YStack>
+      <YStack marginTop="$2">
         <Text color="#b9bbbe" fontSize="$3">
           Server Name
         </Text>
@@ -180,11 +180,14 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
           backgroundColor="#202225"
           borderWidth={0}
           color="white"
+          marginTop="$2"
         />
         <Button
           backgroundColor="#5865F2"
           onPress={handleRename}
           disabled={loading || !newName.trim() || newName === currentName || !isOwner}
+          marginTop="$2"
+          marginBottom="$2"
         >
           Save Changes
         </Button>
@@ -194,7 +197,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
 
       {/* Server Icon */}
       <YStack>
-        <Text color="#b9bbbe" fontSize="$3">
+        <Text color="#b9bbbe" fontSize="$3" marginBottom="$2">
           Server Icon
         </Text>
         
@@ -229,7 +232,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
           </YStack>
         )}
 
-        <XStack>
+        <XStack marginTop="$2">
           <Button
             flex={1}
             backgroundColor="transparent"
@@ -259,7 +262,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
             <Text fontSize="$5" fontWeight="700" color="#f04747">
               Danger Zone
             </Text>
-            <Text color="#b9bbbe" fontSize="$3">
+            <Text color="#b9bbbe" fontSize="$3" marginTop="$2">
               Deleting a server is permanent and cannot be undone.
             </Text>
             <Button
@@ -268,6 +271,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
               borderColor="#f04747"
               onPress={handleDelete}
               disabled={loading}
+              marginTop="$2"
             >
               Delete Server
             </Button>

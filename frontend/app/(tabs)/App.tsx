@@ -1,5 +1,5 @@
 import { Redirect } from 'expo-router';
-import { useAuth } from './utils/AuthContext';
+import { useAuth } from '../../utils/AuthContext';
 import { YStack, Spinner } from 'tamagui';
 
 export default function App() {
