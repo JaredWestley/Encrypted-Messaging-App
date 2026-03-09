@@ -54,7 +54,6 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
   open,
   user,
   onClose,
-  currentUserId,
   selectedServer,
   token,
   logout,

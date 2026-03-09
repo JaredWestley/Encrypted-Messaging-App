@@ -7,6 +7,7 @@ let mediaDevicesAPI: any;
 let RTCSessionDescClass: any;
 let RTCIceCandidateClass: any;
 let RTCViewComponent: any = null;
+let InCallManager: any = null;
 
 if (Platform.OS !== "web") {
   const webrtc = require("react-native-webrtc");
@@ -15,6 +16,12 @@ if (Platform.OS !== "web") {
   RTCSessionDescClass = webrtc.RTCSessionDescription;
   RTCIceCandidateClass = webrtc.RTCIceCandidate;
   RTCViewComponent = webrtc.RTCView;
+  // InCallManager handles iOS audio session (earpiece/speaker routing)
+  try {
+    InCallManager = require("react-native-incall-manager").default;
+  } catch {
+    console.warn("[WebRTC] react-native-incall-manager not available");
+  }
 } else {
   RTPCClass = typeof window !== "undefined" ? (window as any).RTCPeerConnection : undefined;
   mediaDevicesAPI = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
@@ -147,6 +154,12 @@ export function useWebRTC({
     remoteStreamRef.current = null;
     pendingCandidatesRef.current = [];
     pendingOfferRef.current = null;
+    // Stop InCallManager on native (release audio session)
+    if (Platform.OS !== "web" && InCallManager) {
+      try {
+        InCallManager.stop();
+      } catch {}
+    }
   }, [stopDurationTimer]);
 
   const getMediaStream = useCallback(async (callType: "voice" | "video") => {
@@ -157,12 +170,35 @@ export function useWebRTC({
         "If you're accessing from another device, use HTTPS."
       );
     }
+
+    // Build platform-appropriate constraints
+    const videoConstraint = callType === "video"
+      ? (Platform.OS === "web"
+        ? { facingMode: "user" }
+        : { facingMode: { ideal: "user" } }) // Native needs `ideal` instead of exact string
+      : false;
+
     const constraints = {
       audio: true,
-      video: callType === "video" ? { facingMode: "user" } : false,
+      video: videoConstraint,
     };
-    const stream = await mediaDevicesAPI.getUserMedia(constraints);
-    return stream as MediaStream;
+
+    try {
+      const stream = await mediaDevicesAPI.getUserMedia(constraints);
+      return stream as MediaStream;
+    } catch (err: any) {
+      // If video fails (e.g., iOS simulator with no camera), fall back to audio-only
+      if (callType === "video" && err?.name !== "NotAllowedError") {
+        console.warn("[WebRTC] Video not available, falling back to audio-only:", err?.message);
+        try {
+          const audioOnlyStream = await mediaDevicesAPI.getUserMedia({ audio: true, video: false });
+          return audioOnlyStream as MediaStream;
+        } catch (audioErr) {
+          throw audioErr;
+        }
+      }
+      throw err;
+    }
   }, []);
 
   const createPeerConnection = useCallback(() => {
@@ -212,6 +248,23 @@ export function useWebRTC({
     }
   }, []);
 
+  // ─── InCallManager helper ─────────────────────────────────────
+  const startInCallManager = useCallback((callType: "voice" | "video") => {
+    if (Platform.OS !== "web" && InCallManager) {
+      try {
+        // Start audio session — 'video' uses speaker, 'voice' uses earpiece
+        InCallManager.start({ media: callType === "video" ? "video" : "audio" });
+        // For voice calls, default to speakerphone for better experience
+        if (callType === "voice") {
+          InCallManager.setForceSpeakerphoneOn(true);
+        }
+        console.log(`[WebRTC] InCallManager started for ${callType}`);
+      } catch (err) {
+        console.warn("[WebRTC] InCallManager.start failed:", err);
+      }
+    }
+  }, []);
+
   // ─── Public API ─────────────────────────────────────────────────
 
   const startCall = useCallback(
@@ -254,10 +307,13 @@ export function useWebRTC({
         localStream: stream,
       });
 
+      // Start InCallManager for native audio session
+      startInCallManager(callType);
+
       // Send offer via signaling
       sendOffer(remoteUserId, JSON.stringify(offer), callType, callId);
     },
-    [getMediaStream, createPeerConnection, sendOffer]
+    [getMediaStream, createPeerConnection, sendOffer, startInCallManager]
   );
 
   const acceptCall = useCallback(async () => {
@@ -302,9 +358,12 @@ export function useWebRTC({
     }));
     startDurationTimer();
 
+    // Start InCallManager for native audio session
+    startInCallManager(state.callType);
+
     // Send answer via signaling
     sendAnswer(state.remoteUserId, JSON.stringify(answer), state.callId);
-  }, [getMediaStream, createPeerConnection, flushPendingCandidates, sendAnswer, startDurationTimer]);
+  }, [getMediaStream, createPeerConnection, flushPendingCandidates, sendAnswer, startDurationTimer, startInCallManager]);
 
   const rejectCall = useCallback(() => {
     const state = callStateRef.current;
@@ -490,6 +549,20 @@ export function useWebRTC({
     setSelectedSpeakerId(deviceId);
   }, []);
 
+  // Toggle speakerphone on native (uses InCallManager)
+  const [isSpeakerOn, setIsSpeakerOn] = useState(false);
+  const toggleSpeaker = useCallback(() => {
+    if (Platform.OS !== "web" && InCallManager) {
+      const newState = !isSpeakerOn;
+      try {
+        InCallManager.setForceSpeakerphoneOn(newState);
+        setIsSpeakerOn(newState);
+      } catch (err) {
+        console.warn("[WebRTC] Failed to toggle speaker:", err);
+      }
+    }
+  }, [isSpeakerOn]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -512,5 +585,7 @@ export function useWebRTC({
     enumerateAudioDevices,
     switchMicrophone,
     switchSpeaker,
+    toggleSpeaker,
+    isSpeakerOn,
   };
 }

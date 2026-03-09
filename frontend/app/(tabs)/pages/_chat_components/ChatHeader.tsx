@@ -10,6 +10,7 @@ import {
   MessageCircle,
   Phone,
   Video,
+  FileText,
 } from "@tamagui/lucide-icons";
 import type { Server } from "./types";
 import type { CallState } from "../../../../utils/useWebRTC";
@@ -30,6 +31,8 @@ interface ChatHeaderProps {
   onToggleUserSidebar: () => void;
   onOpenSettings: () => void;
   onStartCall: (type: "voice" | "video") => void;
+  onToggleDocuments: () => void;
+  documentCount?: number;
 }
 
 const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -47,6 +50,8 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
   onToggleUserSidebar,
   onOpenSettings,
   onStartCall,
+  onToggleDocuments,
+  documentCount,
 }) => {
   const headerTitle = isDmMode
     ? (dmPartnerName ? `@${dmPartnerName}` : "Direct Message")
@@ -121,6 +126,39 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
             )}
           </XStack>
         )}
+        {/* Documents button - available in both DM and server mode */}
+        <YStack position="relative">
+          <Button
+            size="$3"
+            backgroundColor="transparent"
+            borderWidth={1}
+            borderColor="#43B581"
+            icon={<FileText size={16} color="#43B581" />}
+            onPress={onToggleDocuments}
+            pressStyle={{ backgroundColor: "rgba(67,181,129,0.1)" }}
+          >
+            {!isMobile && "Docs"}
+          </Button>
+          {(documentCount ?? 0) > 0 && (
+            <YStack
+              position="absolute"
+              right={-4}
+              top={-4}
+              backgroundColor="#43B581"
+              borderRadius={8}
+              minWidth={16}
+              height={16}
+              justifyContent="center"
+              alignItems="center"
+              paddingHorizontal={4}
+              pointerEvents="none"
+            >
+              <Text color="white" fontSize={9} fontWeight="700">
+                {(documentCount ?? 0) > 9 ? "9+" : documentCount}
+              </Text>
+            </YStack>
+          )}
+        </YStack>
         {/* Call buttons in DM mode */}
         {isDmMode && activeConversation && (
           <>

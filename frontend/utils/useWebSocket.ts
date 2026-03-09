@@ -29,6 +29,14 @@ interface UseWebSocketOptions {
   onVoiceAnswer?: (channelId: number, fromUserId: number, answer: any) => void;
   onVoiceIceCandidate?: (channelId: number, fromUserId: number, candidate: any) => void;
   onVoiceChannelUsers?: (channelId: number, users: Array<{ user_id: number; username: string }>) => void;
+  onDocCreated?: (document: any) => void;
+  onDocDeleted?: (documentId: number) => void;
+  onDocRenamed?: (documentId: number, title: string) => void;
+  onDocEdit?: (documentId: number, content: string, userId: number, username: string) => void;
+  onWhiteboardAction?: (documentId: number, action: any, userId: number, username: string) => void;
+  onWhiteboardUndo?: (documentId: number, userId: number, username: string) => void;
+  onWhiteboardRedo?: (documentId: number, userId: number, username: string) => void;
+  onCursorUpdate?: (documentId: number, cursorType: string, position: any, userId: number, username: string) => void;
 }
 
 export function useWebSocket({
@@ -52,6 +60,14 @@ export function useWebSocket({
   onVoiceAnswer,
   onVoiceIceCandidate,
   onVoiceChannelUsers,
+  onDocCreated,
+  onDocDeleted,
+  onDocRenamed,
+  onDocEdit,
+  onWhiteboardAction,
+  onWhiteboardUndo,
+  onWhiteboardRedo,
+  onCursorUpdate,
 }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -80,6 +96,14 @@ export function useWebSocket({
     onVoiceAnswer,
     onVoiceIceCandidate,
     onVoiceChannelUsers,
+    onDocCreated,
+    onDocDeleted,
+    onDocRenamed,
+    onDocEdit,
+    onWhiteboardAction,
+    onWhiteboardUndo,
+    onWhiteboardRedo,
+    onCursorUpdate,
   });
   callbacksRef.current = {
     onNewMessage,
@@ -100,6 +124,14 @@ export function useWebSocket({
     onVoiceAnswer,
     onVoiceIceCandidate,
     onVoiceChannelUsers,
+    onDocCreated,
+    onDocDeleted,
+    onDocRenamed,
+    onDocEdit,
+    onWhiteboardAction,
+    onWhiteboardUndo,
+    onWhiteboardRedo,
+    onCursorUpdate,
   };
 
   const cleanup = useCallback(() => {
@@ -194,6 +226,30 @@ export function useWebSocket({
             break;
           case "voice_channel_users":
             callbacks.onVoiceChannelUsers?.(data.channel_id, data.users);
+            break;
+          case "doc_created":
+            callbacks.onDocCreated?.(data.document);
+            break;
+          case "doc_deleted":
+            callbacks.onDocDeleted?.(data.document_id);
+            break;
+          case "doc_renamed":
+            callbacks.onDocRenamed?.(data.document_id, data.title);
+            break;
+          case "doc_edit":
+            callbacks.onDocEdit?.(data.document_id, data.content, data.user_id, data.username);
+            break;
+          case "whiteboard_action":
+            callbacks.onWhiteboardAction?.(data.document_id, data.action, data.user_id, data.username);
+            break;
+          case "whiteboard_undo":
+            callbacks.onWhiteboardUndo?.(data.document_id, data.user_id, data.username);
+            break;
+          case "whiteboard_redo":
+            callbacks.onWhiteboardRedo?.(data.document_id, data.user_id, data.username);
+            break;
+          case "cursor_update":
+            callbacks.onCursorUpdate?.(data.document_id, data.cursor_type, data.position, data.user_id, data.username);
             break;
         }
       } catch {
@@ -291,6 +347,37 @@ export function useWebSocket({
     }
   }, []);
 
+  // ─── Collaborative document send functions ─────────────────────
+  const sendDocEdit = useCallback((documentId: number, content: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "doc_edit", document_id: documentId, content }));
+    }
+  }, []);
+
+  const sendWhiteboardAction = useCallback((documentId: number, action: any) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "whiteboard_action", document_id: documentId, action }));
+    }
+  }, []);
+
+  const sendWhiteboardUndo = useCallback((documentId: number) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "whiteboard_undo", document_id: documentId }));
+    }
+  }, []);
+
+  const sendWhiteboardRedo = useCallback((documentId: number) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "whiteboard_redo", document_id: documentId }));
+    }
+  }, []);
+
+  const sendCursorUpdate = useCallback((documentId: number, cursorType: string, position: any) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "cursor_update", document_id: documentId, cursor_type: cursorType, position }));
+    }
+  }, []);
+
   return {
     isConnected,
     sendTyping,
@@ -302,5 +389,10 @@ export function useWebSocket({
     sendVoiceOffer,
     sendVoiceAnswer,
     sendVoiceIceCandidate,
+    sendDocEdit,
+    sendWhiteboardAction,
+    sendWhiteboardUndo,
+    sendWhiteboardRedo,
+    sendCursorUpdate,
   };
 }

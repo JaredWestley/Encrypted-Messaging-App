@@ -20,6 +20,10 @@ export interface Message {
   user_id: number;
   timestamp: string;
   attachment?: MessageAttachment | null;
+  _encrypted?: boolean;
+  _rawContent?: string;
+  _rawNonce?: string;
+  _senderPublicKey?: string;
 }
 
 export interface Server {

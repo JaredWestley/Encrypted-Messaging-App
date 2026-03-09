@@ -947,3 +947,175 @@ export async function deleteVoiceChannel(
     logout
   );
 }
+
+
+// ─── Collaborative Documents ────────────────────────────────────
+
+export interface CollabDocumentData {
+  id: number;
+  title: string;
+  doc_type: "document" | "whiteboard";
+  server_id: number | null;
+  conversation_id: number | null;
+  created_by: number;
+  is_encrypted: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DocumentVersionData {
+  id: number;
+  document_id: number;
+  version_number: number;
+  content: string;
+  nonce: string | null;
+  created_by: number;
+  created_at: string;
+}
+
+export async function createServerDocument(
+  token: string,
+  serverId: number,
+  title: string,
+  docType: "document" | "whiteboard",
+  logout: () => void
+): Promise<CollabDocumentData> {
+  return apiRequest<CollabDocumentData>(
+    `${API_URL}/servers/${serverId}/documents`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ title, doc_type: docType }),
+    },
+    logout
+  );
+}
+
+export async function createConversationDocument(
+  token: string,
+  conversationId: number,
+  title: string,
+  docType: "document" | "whiteboard",
+  logout: () => void
+): Promise<CollabDocumentData> {
+  return apiRequest<CollabDocumentData>(
+    `${API_URL}/conversations/${conversationId}/documents`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ title, doc_type: docType }),
+    },
+    logout
+  );
+}
+
+export async function fetchServerDocuments(
+  token: string,
+  serverId: number,
+  logout: () => void
+): Promise<CollabDocumentData[]> {
+  return apiRequest<CollabDocumentData[]>(
+    `${API_URL}/servers/${serverId}/documents`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+export async function fetchConversationDocuments(
+  token: string,
+  conversationId: number,
+  logout: () => void
+): Promise<CollabDocumentData[]> {
+  return apiRequest<CollabDocumentData[]>(
+    `${API_URL}/conversations/${conversationId}/documents`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+export async function fetchDocument(
+  token: string,
+  documentId: number,
+  logout: () => void
+): Promise<CollabDocumentData> {
+  return apiRequest<CollabDocumentData>(
+    `${API_URL}/documents/${documentId}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+export async function updateDocument(
+  token: string,
+  documentId: number,
+  title: string,
+  logout: () => void
+): Promise<CollabDocumentData> {
+  return apiRequest<CollabDocumentData>(
+    `${API_URL}/documents/${documentId}`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    },
+    logout
+  );
+}
+
+export async function deleteDocument(
+  token: string,
+  documentId: number,
+  logout: () => void
+): Promise<void> {
+  await apiRequest<any>(
+    `${API_URL}/documents/${documentId}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+    logout
+  );
+}
+
+export async function saveDocumentVersion(
+  token: string,
+  documentId: number,
+  content: string,
+  nonce: string | null,
+  logout: () => void
+): Promise<DocumentVersionData> {
+  return apiRequest<DocumentVersionData>(
+    `${API_URL}/documents/${documentId}/versions`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ content, nonce }),
+    },
+    logout
+  );
+}
+
+export async function fetchDocumentVersions(
+  token: string,
+  documentId: number,
+  logout: () => void
+): Promise<DocumentVersionData[]> {
+  return apiRequest<DocumentVersionData[]>(
+    `${API_URL}/documents/${documentId}/versions`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+export async function fetchDocumentVersion(
+  token: string,
+  documentId: number,
+  versionId: number,
+  logout: () => void
+): Promise<DocumentVersionData> {
+  return apiRequest<DocumentVersionData>(
+    `${API_URL}/documents/${documentId}/versions/${versionId}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}

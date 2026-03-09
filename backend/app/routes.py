@@ -4,18 +4,21 @@ from fastapi.responses import Response
 from typing import List, Optional
 from sqlmodel import Session, select, delete
 from app.schemas import (
-    MessageCreate, MessageUpdate, UserCreate, RoleAssign, LoginRequest, UserRead, PublicUserRead, 
+    MessageCreate, MessageUpdate, UserCreate, RoleAssign, LoginRequest, UserRead, PublicUserRead,
     RoleRead, RoleCreate, ServerInviteRead, ServerUpdate, UserUpdate,
     FriendshipRead, FriendRequestCreate, ConversationRead, DirectMessageCreate, DirectMessageRead,
     PublicKeyUpload, PublicKeyRead, ServerKeyUpload, ServerKeyRead,
     AttachmentRead,
     VoiceChannelCreate, VoiceChannelRead,
+    CollabDocumentCreate, CollabDocumentUpdate, CollabDocumentRead,
+    DocumentVersionCreate, DocumentVersionRead,
 )
 from app.models import (
     User, Server, Message, ServerMembership, ServerInvite, ServerMembershipRole,
     Role, ServerBan, RolePermission, TokenBlacklist,
     Friendship, Conversation, ConversationMember, DirectMessage, ServerKey,
     Attachment, VoiceChannel,
+    CollabDocument, DocumentVersion,
 )
 from app.database import get_session, engine
 from app.auth import (
@@ -162,7 +165,7 @@ async def send_message(
         nonce=message.nonce,
         sender_public_key=message.sender_public_key,
         attachment_id=message.attachment_id,
-        created_at=message.created_at or datetime.now(timezone.utc)
+        created_at=message.created_at or datetime.utcnow()
     )
     session.add(db_message)
     session.commit()
@@ -1154,7 +1157,7 @@ async def send_friend_request(
             existing.status = "pending"
             existing.user_id = current_user.id
             existing.friend_id = friend.id
-            existing.created_at = datetime.now(timezone.utc)
+            existing.created_at = datetime.utcnow()
             session.add(existing)
             session.commit()
             return {"detail": "Friend request sent"}
@@ -2678,6 +2681,95 @@ async def dm_websocket_endpoint(websocket: WebSocket):
                     relay_msg["from_username"] = username
                     await manager.send_to_user(to_user_id, relay_msg)
 
+            # ─── Collaborative document real-time editing (DMs) ───
+            elif msg_type == "doc_edit":
+                conversation_id = data.get("conversation_id")
+                document_id = data.get("document_id")
+                content = data.get("content")
+                if conversation_id and document_id is not None and content is not None:
+                    with Session(engine) as s:
+                        members = s.exec(
+                            select(ConversationMember).where(
+                                ConversationMember.conversation_id == conversation_id
+                            )
+                        ).all()
+                        for m in members:
+                            if m.user_id != user_id:
+                                await manager.send_to_user(m.user_id, {
+                                    "type": "doc_edit",
+                                    "conversation_id": conversation_id,
+                                    "document_id": document_id,
+                                    "content": content,
+                                    "user_id": user_id,
+                                    "username": username,
+                                })
+
+            elif msg_type == "whiteboard_action":
+                conversation_id = data.get("conversation_id")
+                document_id = data.get("document_id")
+                action = data.get("action")
+                if conversation_id and document_id is not None and action is not None:
+                    with Session(engine) as s:
+                        members = s.exec(
+                            select(ConversationMember).where(
+                                ConversationMember.conversation_id == conversation_id
+                            )
+                        ).all()
+                        for m in members:
+                            if m.user_id != user_id:
+                                await manager.send_to_user(m.user_id, {
+                                    "type": "whiteboard_action",
+                                    "conversation_id": conversation_id,
+                                    "document_id": document_id,
+                                    "action": action,
+                                    "user_id": user_id,
+                                    "username": username,
+                                })
+
+            elif msg_type in ("whiteboard_undo", "whiteboard_redo"):
+                conversation_id = data.get("conversation_id")
+                document_id = data.get("document_id")
+                if conversation_id and document_id is not None:
+                    with Session(engine) as s:
+                        members = s.exec(
+                            select(ConversationMember).where(
+                                ConversationMember.conversation_id == conversation_id
+                            )
+                        ).all()
+                        for m in members:
+                            if m.user_id != user_id:
+                                await manager.send_to_user(m.user_id, {
+                                    "type": msg_type,
+                                    "conversation_id": conversation_id,
+                                    "document_id": document_id,
+                                    "user_id": user_id,
+                                    "username": username,
+                                })
+
+            elif msg_type == "cursor_update":
+                conversation_id = data.get("conversation_id")
+                document_id = data.get("document_id")
+                cursor_type = data.get("cursor_type")
+                position = data.get("position")
+                if conversation_id and document_id is not None and position is not None:
+                    with Session(engine) as s:
+                        members = s.exec(
+                            select(ConversationMember).where(
+                                ConversationMember.conversation_id == conversation_id
+                            )
+                        ).all()
+                        for m in members:
+                            if m.user_id != user_id:
+                                await manager.send_to_user(m.user_id, {
+                                    "type": "cursor_update",
+                                    "conversation_id": conversation_id,
+                                    "document_id": document_id,
+                                    "cursor_type": cursor_type,
+                                    "position": position,
+                                    "user_id": user_id,
+                                    "username": username,
+                                })
+
     except WebSocketDisconnect:
         manager.disconnect_dm(websocket, user_id)
     except Exception:
@@ -2854,6 +2946,65 @@ async def websocket_endpoint(websocket: WebSocket, server_id: int):
                     relay_msg["from_user_id"] = user_id
                     await manager.send_to_user_in_server(server_id, to_user_id, relay_msg)
 
+            # ─── Collaborative document real-time editing ─────────
+            elif msg_type == "doc_edit":
+                document_id = data.get("document_id")
+                content = data.get("content")
+                if document_id is not None and content is not None:
+                    await manager.broadcast_to_server(server_id, {
+                        "type": "doc_edit",
+                        "document_id": document_id,
+                        "content": content,
+                        "user_id": user_id,
+                        "username": username,
+                    }, exclude_user_id=user_id)
+
+            elif msg_type == "whiteboard_action":
+                document_id = data.get("document_id")
+                action = data.get("action")
+                if document_id is not None and action is not None:
+                    await manager.broadcast_to_server(server_id, {
+                        "type": "whiteboard_action",
+                        "document_id": document_id,
+                        "action": action,
+                        "user_id": user_id,
+                        "username": username,
+                    }, exclude_user_id=user_id)
+
+            elif msg_type == "whiteboard_undo":
+                document_id = data.get("document_id")
+                if document_id is not None:
+                    await manager.broadcast_to_server(server_id, {
+                        "type": "whiteboard_undo",
+                        "document_id": document_id,
+                        "user_id": user_id,
+                        "username": username,
+                    }, exclude_user_id=user_id)
+
+            elif msg_type == "whiteboard_redo":
+                document_id = data.get("document_id")
+                if document_id is not None:
+                    await manager.broadcast_to_server(server_id, {
+                        "type": "whiteboard_redo",
+                        "document_id": document_id,
+                        "user_id": user_id,
+                        "username": username,
+                    }, exclude_user_id=user_id)
+
+            elif msg_type == "cursor_update":
+                document_id = data.get("document_id")
+                cursor_type = data.get("cursor_type")
+                position = data.get("position")
+                if document_id is not None and position is not None:
+                    await manager.broadcast_to_server(server_id, {
+                        "type": "cursor_update",
+                        "document_id": document_id,
+                        "cursor_type": cursor_type,
+                        "position": position,
+                        "user_id": user_id,
+                        "username": username,
+                    }, exclude_user_id=user_id)
+
     except WebSocketDisconnect:
         # Clean up voice channel on disconnect
         left_channel = manager.leave_all_voice_channels(user_id)
@@ -2871,3 +3022,440 @@ async def websocket_endpoint(websocket: WebSocket, server_id: int):
     except Exception:
         manager.leave_all_voice_channels(user_id)
         manager.disconnect(websocket, server_id, user_id)
+
+
+# ─── Collaborative Documents ────────────────────────────────────
+
+# Create document in a server
+@router.post("/servers/{server_id}/documents", response_model=CollabDocumentRead)
+async def create_server_document(
+    server_id: int,
+    doc: CollabDocumentCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    # Verify membership
+    membership = session.exec(
+        select(ServerMembership).where(
+            ServerMembership.server_id == server_id,
+            ServerMembership.user_id == current_user.id
+        )
+    ).first()
+    if not membership:
+        raise HTTPException(403, "You are not a member of this server")
+
+    if doc.doc_type not in ("document", "whiteboard"):
+        raise HTTPException(400, "doc_type must be 'document' or 'whiteboard'")
+
+    now = datetime.utcnow()
+    document = CollabDocument(
+        title=doc.title,
+        doc_type=doc.doc_type,
+        server_id=server_id,
+        created_by=current_user.id,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(document)
+    session.commit()
+    session.refresh(document)
+
+    # Broadcast to other server members via WebSocket
+    await manager.broadcast_to_server(server_id, {
+        "type": "doc_created",
+        "document": {
+            "id": document.id,
+            "title": document.title,
+            "doc_type": document.doc_type,
+            "server_id": document.server_id,
+            "conversation_id": document.conversation_id,
+            "created_by": document.created_by,
+            "is_encrypted": document.is_encrypted,
+            "created_at": document.created_at.isoformat(),
+            "updated_at": document.updated_at.isoformat(),
+        }
+    }, exclude_user_id=current_user.id)
+
+    return document
+
+
+# List documents in a server
+@router.get("/servers/{server_id}/documents", response_model=List[CollabDocumentRead])
+async def list_server_documents(
+    server_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    membership = session.exec(
+        select(ServerMembership).where(
+            ServerMembership.server_id == server_id,
+            ServerMembership.user_id == current_user.id
+        )
+    ).first()
+    if not membership:
+        raise HTTPException(403, "You are not a member of this server")
+
+    docs = session.exec(
+        select(CollabDocument).where(CollabDocument.server_id == server_id)
+        .order_by(CollabDocument.updated_at.desc())
+    ).all()
+    return docs
+
+
+# Create document in a DM conversation
+@router.post("/conversations/{conversation_id}/documents", response_model=CollabDocumentRead)
+async def create_conversation_document(
+    conversation_id: int,
+    doc: CollabDocumentCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    member = session.exec(
+        select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.user_id == current_user.id
+        )
+    ).first()
+    if not member:
+        raise HTTPException(403, "You are not a member of this conversation")
+
+    if doc.doc_type not in ("document", "whiteboard"):
+        raise HTTPException(400, "doc_type must be 'document' or 'whiteboard'")
+
+    now = datetime.utcnow()
+    document = CollabDocument(
+        title=doc.title,
+        doc_type=doc.doc_type,
+        conversation_id=conversation_id,
+        created_by=current_user.id,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(document)
+    session.commit()
+    session.refresh(document)
+
+    # Broadcast to conversation members via DM WebSocket
+    members = session.exec(
+        select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id
+        )
+    ).all()
+    doc_payload = {
+        "type": "doc_created",
+        "document": {
+            "id": document.id,
+            "title": document.title,
+            "doc_type": document.doc_type,
+            "server_id": document.server_id,
+            "conversation_id": document.conversation_id,
+            "created_by": document.created_by,
+            "is_encrypted": document.is_encrypted,
+            "created_at": document.created_at.isoformat(),
+            "updated_at": document.updated_at.isoformat(),
+        },
+        "conversation_id": conversation_id,
+    }
+    for m in members:
+        if m.user_id != current_user.id:
+            await manager.send_to_user(m.user_id, doc_payload)
+
+    return document
+
+
+# List documents in a DM conversation
+@router.get("/conversations/{conversation_id}/documents", response_model=List[CollabDocumentRead])
+async def list_conversation_documents(
+    conversation_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    member = session.exec(
+        select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.user_id == current_user.id
+        )
+    ).first()
+    if not member:
+        raise HTTPException(403, "You are not a member of this conversation")
+
+    docs = session.exec(
+        select(CollabDocument).where(CollabDocument.conversation_id == conversation_id)
+        .order_by(CollabDocument.updated_at.desc())
+    ).all()
+    return docs
+
+
+# Get a single document
+@router.get("/documents/{document_id}", response_model=CollabDocumentRead)
+async def get_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    doc = session.get(CollabDocument, document_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    # Check access
+    if doc.server_id:
+        membership = session.exec(
+            select(ServerMembership).where(
+                ServerMembership.server_id == doc.server_id,
+                ServerMembership.user_id == current_user.id
+            )
+        ).first()
+        if not membership:
+            raise HTTPException(403, "Access denied")
+    elif doc.conversation_id:
+        member = session.exec(
+            select(ConversationMember).where(
+                ConversationMember.conversation_id == doc.conversation_id,
+                ConversationMember.user_id == current_user.id
+            )
+        ).first()
+        if not member:
+            raise HTTPException(403, "Access denied")
+
+    return doc
+
+
+# Update document title (rename)
+@router.put("/documents/{document_id}", response_model=CollabDocumentRead)
+async def update_document(
+    document_id: int,
+    update: CollabDocumentUpdate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    doc = session.get(CollabDocument, document_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    # Check access (same as get)
+    if doc.server_id:
+        membership = session.exec(
+            select(ServerMembership).where(
+                ServerMembership.server_id == doc.server_id,
+                ServerMembership.user_id == current_user.id
+            )
+        ).first()
+        if not membership:
+            raise HTTPException(403, "Access denied")
+    elif doc.conversation_id:
+        member = session.exec(
+            select(ConversationMember).where(
+                ConversationMember.conversation_id == doc.conversation_id,
+                ConversationMember.user_id == current_user.id
+            )
+        ).first()
+        if not member:
+            raise HTTPException(403, "Access denied")
+
+    doc.title = update.title
+    doc.updated_at = datetime.utcnow()
+    session.add(doc)
+    session.commit()
+    session.refresh(doc)
+
+    # Broadcast rename via WebSocket
+    rename_payload = {
+        "type": "doc_renamed",
+        "document_id": document_id,
+        "title": doc.title,
+    }
+    if doc.server_id:
+        await manager.broadcast_to_server(doc.server_id, rename_payload, exclude_user_id=current_user.id)
+    elif doc.conversation_id:
+        members = session.exec(
+            select(ConversationMember).where(
+                ConversationMember.conversation_id == doc.conversation_id
+            )
+        ).all()
+        rename_payload["conversation_id"] = doc.conversation_id
+        for m in members:
+            if m.user_id != current_user.id:
+                await manager.send_to_user(m.user_id, rename_payload)
+
+    return doc
+
+
+# Delete a document
+@router.delete("/documents/{document_id}")
+async def delete_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    doc = session.get(CollabDocument, document_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    # Only creator or server owner can delete
+    can_delete = doc.created_by == current_user.id
+    if not can_delete and doc.server_id:
+        server = session.get(Server, doc.server_id)
+        if server and server.owner_id == current_user.id:
+            can_delete = True
+    if not can_delete:
+        raise HTTPException(403, "Only the creator or server owner can delete")
+
+    # Capture routing info before delete
+    doc_server_id = doc.server_id
+    doc_conversation_id = doc.conversation_id
+
+    session.delete(doc)
+    session.commit()
+
+    # Broadcast deletion via WebSocket
+    delete_payload = {"type": "doc_deleted", "document_id": document_id}
+    if doc_server_id:
+        await manager.broadcast_to_server(doc_server_id, delete_payload, exclude_user_id=current_user.id)
+    elif doc_conversation_id:
+        with Session(engine) as s2:
+            members = s2.exec(
+                select(ConversationMember).where(
+                    ConversationMember.conversation_id == doc_conversation_id
+                )
+            ).all()
+            delete_payload["conversation_id"] = doc_conversation_id
+            for m in members:
+                if m.user_id != current_user.id:
+                    await manager.send_to_user(m.user_id, delete_payload)
+
+    return {"detail": "Document deleted"}
+
+
+# Save a new version
+@router.post("/documents/{document_id}/versions", response_model=DocumentVersionRead)
+async def save_document_version(
+    document_id: int,
+    version_data: DocumentVersionCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    doc = session.get(CollabDocument, document_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    # Check access
+    if doc.server_id:
+        membership = session.exec(
+            select(ServerMembership).where(
+                ServerMembership.server_id == doc.server_id,
+                ServerMembership.user_id == current_user.id
+            )
+        ).first()
+        if not membership:
+            raise HTTPException(403, "Access denied")
+    elif doc.conversation_id:
+        member = session.exec(
+            select(ConversationMember).where(
+                ConversationMember.conversation_id == doc.conversation_id,
+                ConversationMember.user_id == current_user.id
+            )
+        ).first()
+        if not member:
+            raise HTTPException(403, "Access denied")
+
+    # Get next version number
+    latest = session.exec(
+        select(DocumentVersion)
+        .where(DocumentVersion.document_id == document_id)
+        .order_by(DocumentVersion.version_number.desc())
+    ).first()
+    next_version = (latest.version_number + 1) if latest else 1
+
+    version = DocumentVersion(
+        document_id=document_id,
+        version_number=next_version,
+        content=version_data.content,
+        nonce=version_data.nonce,
+        created_by=current_user.id,
+        created_at=datetime.utcnow(),
+    )
+    session.add(version)
+
+    # Update document's updated_at
+    doc.updated_at = datetime.utcnow()
+    session.add(doc)
+    session.commit()
+    session.refresh(version)
+    return version
+
+
+# List versions of a document
+@router.get("/documents/{document_id}/versions", response_model=List[DocumentVersionRead])
+async def list_document_versions(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    doc = session.get(CollabDocument, document_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    # Check access
+    if doc.server_id:
+        membership = session.exec(
+            select(ServerMembership).where(
+                ServerMembership.server_id == doc.server_id,
+                ServerMembership.user_id == current_user.id
+            )
+        ).first()
+        if not membership:
+            raise HTTPException(403, "Access denied")
+    elif doc.conversation_id:
+        member = session.exec(
+            select(ConversationMember).where(
+                ConversationMember.conversation_id == doc.conversation_id,
+                ConversationMember.user_id == current_user.id
+            )
+        ).first()
+        if not member:
+            raise HTTPException(403, "Access denied")
+
+    versions = session.exec(
+        select(DocumentVersion)
+        .where(DocumentVersion.document_id == document_id)
+        .order_by(DocumentVersion.version_number.desc())
+    ).all()
+    return versions
+
+
+# Get a specific version
+@router.get("/documents/{document_id}/versions/{version_id}", response_model=DocumentVersionRead)
+async def get_document_version(
+    document_id: int,
+    version_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    doc = session.get(CollabDocument, document_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    # Check access
+    if doc.server_id:
+        membership = session.exec(
+            select(ServerMembership).where(
+                ServerMembership.server_id == doc.server_id,
+                ServerMembership.user_id == current_user.id
+            )
+        ).first()
+        if not membership:
+            raise HTTPException(403, "Access denied")
+    elif doc.conversation_id:
+        member = session.exec(
+            select(ConversationMember).where(
+                ConversationMember.conversation_id == doc.conversation_id,
+                ConversationMember.user_id == current_user.id
+            )
+        ).first()
+        if not member:
+            raise HTTPException(403, "Access denied")
+
+    version = session.get(DocumentVersion, version_id)
+    if not version or version.document_id != document_id:
+        raise HTTPException(404, "Version not found")
+    return version

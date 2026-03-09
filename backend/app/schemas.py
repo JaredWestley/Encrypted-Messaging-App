@@ -203,3 +203,43 @@ class AttachmentRead(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ─── Collaborative Documents ────────────────────────────────────
+
+class CollabDocumentCreate(BaseModel):
+    title: str = "Untitled"
+    doc_type: str = "document"  # "document" or "whiteboard"
+
+class CollabDocumentUpdate(BaseModel):
+    title: str
+
+class CollabDocumentRead(BaseModel):
+    id: int
+    title: str
+    doc_type: str
+    server_id: Optional[int] = None
+    conversation_id: Optional[int] = None
+    created_by: int
+    is_encrypted: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class DocumentVersionCreate(BaseModel):
+    content: str  # Base64-encoded content
+    nonce: Optional[str] = None
+
+class DocumentVersionRead(BaseModel):
+    id: int
+    document_id: int
+    version_number: int
+    content: str
+    nonce: Optional[str] = None
+    created_by: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

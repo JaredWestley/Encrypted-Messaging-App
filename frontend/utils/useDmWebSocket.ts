@@ -25,6 +25,15 @@ interface UseDmWebSocketOptions {
   onCallIceCandidate?: (fromUserId: number, candidate: any, callId: string) => void;
   onCallReject?: (fromUserId: number, callId: string) => void;
   onCallHangup?: (fromUserId: number, callId: string) => void;
+  // Collaborative document callbacks
+  onDocCreated?: (document: any, conversationId: number) => void;
+  onDocDeleted?: (documentId: number, conversationId: number) => void;
+  onDocRenamed?: (documentId: number, title: string, conversationId: number) => void;
+  onDocEdit?: (documentId: number, content: string, conversationId: number, userId: number, username: string) => void;
+  onWhiteboardAction?: (documentId: number, action: any, conversationId: number, userId: number, username: string) => void;
+  onWhiteboardUndo?: (documentId: number, conversationId: number, userId: number, username: string) => void;
+  onWhiteboardRedo?: (documentId: number, conversationId: number, userId: number, username: string) => void;
+  onCursorUpdate?: (documentId: number, cursorType: string, position: any, conversationId: number, userId: number, username: string) => void;
 }
 
 export function useDmWebSocket({
@@ -45,6 +54,14 @@ export function useDmWebSocket({
   onCallIceCandidate,
   onCallReject,
   onCallHangup,
+  onDocCreated,
+  onDocDeleted,
+  onDocRenamed,
+  onDocEdit,
+  onWhiteboardAction,
+  onWhiteboardUndo,
+  onWhiteboardRedo,
+  onCursorUpdate,
 }: UseDmWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,6 +89,14 @@ export function useDmWebSocket({
     onCallIceCandidate,
     onCallReject,
     onCallHangup,
+    onDocCreated,
+    onDocDeleted,
+    onDocRenamed,
+    onDocEdit,
+    onWhiteboardAction,
+    onWhiteboardUndo,
+    onWhiteboardRedo,
+    onCursorUpdate,
   });
   callbacksRef.current = {
     onDmNewMessage,
@@ -89,6 +114,14 @@ export function useDmWebSocket({
     onCallIceCandidate,
     onCallReject,
     onCallHangup,
+    onDocCreated,
+    onDocDeleted,
+    onDocRenamed,
+    onDocEdit,
+    onWhiteboardAction,
+    onWhiteboardUndo,
+    onWhiteboardRedo,
+    onCursorUpdate,
   };
 
   const cleanup = useCallback(() => {
@@ -195,6 +228,31 @@ export function useDmWebSocket({
           case "call_hangup":
             callbacks.onCallHangup?.(data.from_user_id, data.call_id);
             break;
+          // Collaborative document events
+          case "doc_created":
+            callbacks.onDocCreated?.(data.document, data.conversation_id);
+            break;
+          case "doc_deleted":
+            callbacks.onDocDeleted?.(data.document_id, data.conversation_id);
+            break;
+          case "doc_renamed":
+            callbacks.onDocRenamed?.(data.document_id, data.title, data.conversation_id);
+            break;
+          case "doc_edit":
+            callbacks.onDocEdit?.(data.document_id, data.content, data.conversation_id, data.user_id, data.username);
+            break;
+          case "whiteboard_action":
+            callbacks.onWhiteboardAction?.(data.document_id, data.action, data.conversation_id, data.user_id, data.username);
+            break;
+          case "whiteboard_undo":
+            callbacks.onWhiteboardUndo?.(data.document_id, data.conversation_id, data.user_id, data.username);
+            break;
+          case "whiteboard_redo":
+            callbacks.onWhiteboardRedo?.(data.document_id, data.conversation_id, data.user_id, data.username);
+            break;
+          case "cursor_update":
+            callbacks.onCursorUpdate?.(data.document_id, data.cursor_type, data.position, data.conversation_id, data.user_id, data.username);
+            break;
         }
       } catch {
         // Ignore malformed messages
@@ -285,6 +343,37 @@ export function useDmWebSocket({
     }
   }, []);
 
+  // ─── Collaborative document send functions ─────────────────────
+  const sendDocEdit = useCallback((conversationId: number, documentId: number, content: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "doc_edit", conversation_id: conversationId, document_id: documentId, content }));
+    }
+  }, []);
+
+  const sendWhiteboardAction = useCallback((conversationId: number, documentId: number, action: any) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "whiteboard_action", conversation_id: conversationId, document_id: documentId, action }));
+    }
+  }, []);
+
+  const sendWhiteboardUndo = useCallback((conversationId: number, documentId: number) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "whiteboard_undo", conversation_id: conversationId, document_id: documentId }));
+    }
+  }, []);
+
+  const sendWhiteboardRedo = useCallback((conversationId: number, documentId: number) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "whiteboard_redo", conversation_id: conversationId, document_id: documentId }));
+    }
+  }, []);
+
+  const sendCursorUpdate = useCallback((conversationId: number, documentId: number, cursorType: string, position: any) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "cursor_update", conversation_id: conversationId, document_id: documentId, cursor_type: cursorType, position }));
+    }
+  }, []);
+
   return {
     isConnected,
     isConnecting,
@@ -295,5 +384,10 @@ export function useDmWebSocket({
     sendCallIceCandidate,
     sendCallReject,
     sendCallHangup,
+    sendDocEdit,
+    sendWhiteboardAction,
+    sendWhiteboardUndo,
+    sendWhiteboardRedo,
+    sendCursorUpdate,
   };
 }

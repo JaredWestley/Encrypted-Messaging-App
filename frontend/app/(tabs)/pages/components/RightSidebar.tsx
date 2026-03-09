@@ -30,7 +30,6 @@ interface RightSidebarProps {
 const RightSidebar: React.FC<RightSidebarProps> = ({
   selectedServer,
   token,
-  userId,
   onUserClick,
   onClose,
   logout,

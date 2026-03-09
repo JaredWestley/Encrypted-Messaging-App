@@ -13,7 +13,7 @@ class User(SQLModel, table=True):
     password: str
     icon_url: Optional[str]
     public_key: Optional[str] = Field(default=None)  # Base64-encoded X25519 public key
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     memberships: List["ServerMembership"] = Relationship(back_populates="user")
 
 
@@ -21,7 +21,7 @@ class User(SQLModel, table=True):
 class TokenBlacklist(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     token: str = Field(index=True)
-    blacklisted_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    blacklisted_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: datetime
 
 # Messages
@@ -35,7 +35,7 @@ class Message(SQLModel, table=True):
     nonce: Optional[str] = Field(default=None)  # Base64-encoded nonce
     sender_public_key: Optional[str] = Field(default=None)  # Base64 sender public key
     attachment_id: Optional[int] = Field(default=None, foreign_key="attachment.id")
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 
@@ -43,7 +43,7 @@ class Message(SQLModel, table=True):
 class Server(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     owner_id: int = Field(foreign_key="user.id")
     icon_url: Optional[str] = None
 
@@ -102,7 +102,7 @@ class ServerBan(SQLModel, table=True):
     server_id: int = Field(foreign_key="server.id", primary_key=True)
     user_id: int = Field(foreign_key="user.id", primary_key=True)
     banned_by: int = Field(foreign_key="user.id")
-    banned_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    banned_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Role(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -134,7 +134,7 @@ class ServerInvite(SQLModel, table=True):
     token: str = Field(default_factory=lambda: secrets.token_urlsafe(16), index=True, unique=True)
     server_id: int = Field(foreign_key="server.id")
     created_by: int = Field(foreign_key="user.id")
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
     server: "Server" = Relationship()
     user: "User" = Relationship()
@@ -147,14 +147,14 @@ class Friendship(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", index=True)
     friend_id: int = Field(foreign_key="user.id", index=True)
     status: str = Field(default="pending")  # "pending", "accepted", "rejected"
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class Conversation(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: Optional[str] = None  # Optional name for group DMs
     is_group: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
     members: List["ConversationMember"] = Relationship(
         back_populates="conversation",
@@ -169,7 +169,7 @@ class Conversation(SQLModel, table=True):
 class ConversationMember(SQLModel, table=True):
     conversation_id: int = Field(foreign_key="conversation.id", primary_key=True)
     user_id: int = Field(foreign_key="user.id", primary_key=True)
-    joined_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    joined_at: datetime = Field(default_factory=datetime.utcnow)
 
     conversation: "Conversation" = Relationship(back_populates="members")
 
@@ -183,7 +183,7 @@ class DirectMessage(SQLModel, table=True):
     nonce: Optional[str] = Field(default=None)  # Base64-encoded nonce
     sender_public_key: Optional[str] = Field(default=None)  # Base64 sender public key
     attachment_id: Optional[int] = Field(default=None, foreign_key="attachment.id")
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
     conversation: "Conversation" = Relationship(back_populates="messages")
 
@@ -203,7 +203,7 @@ class Attachment(SQLModel, table=True):
     file_key_nonce: Optional[str] = None
     sender_file_key_encrypted: Optional[str] = None
     sender_file_key_nonce: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # Server encryption keys (symmetric key encrypted per-member with their public key)
@@ -214,7 +214,7 @@ class ServerKey(SQLModel, table=True):
     encrypted_key: str  # Base64: the server's symmetric key encrypted with this user's public key
     nonce: str  # Base64: nonce used for the encryption
     encrypted_by: Optional[int] = Field(default=None, foreign_key="user.id")  # Who encrypted this key
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # Voice Channels
@@ -224,4 +224,35 @@ class VoiceChannel(SQLModel, table=True):
     name: str = Field(default="General")
     position: int = Field(default=0)
     user_limit: int = Field(default=8)  # 0 = unlimited
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ─── Collaborative Documents & Whiteboards ───────────────────────
+
+class CollabDocument(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(default="Untitled")
+    doc_type: str = Field(default="document")  # "document" or "whiteboard"
+    server_id: Optional[int] = Field(default=None, foreign_key="server.id", index=True)
+    conversation_id: Optional[int] = Field(default=None, foreign_key="conversation.id", index=True)
+    created_by: int = Field(foreign_key="user.id")
+    is_encrypted: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    versions: List["DocumentVersion"] = Relationship(
+        back_populates="document",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
+
+class DocumentVersion(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    document_id: int = Field(foreign_key="collabdocument.id", index=True)
+    version_number: int = Field(default=1)
+    content: str  # Base64-encoded (optionally encrypted) content / Yjs state
+    nonce: Optional[str] = Field(default=None)
+    created_by: int = Field(foreign_key="user.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    document: "CollabDocument" = Relationship(back_populates="versions")

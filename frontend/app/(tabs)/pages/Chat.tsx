@@ -37,6 +37,10 @@ import MessageOptionsModal from "./_chat_components/MessageOptionsModal";
 import EmptyState from "./_chat_components/EmptyState";
 import TypingIndicator from "./_chat_components/TypingIndicator";
 import SnackbarToast from "./_chat_components/SnackbarToast";
+import DocumentListPanel from "./_chat_components/_collab/DocumentListPanel";
+import DocumentEditor from "./_chat_components/_collab/DocumentEditor";
+import WhiteboardEditor from "./_chat_components/_collab/WhiteboardEditor";
+import VersionHistoryPanel from "./_chat_components/_collab/VersionHistoryPanel";
 import { isImageMimeType, formatFileSize } from "./_chat_components/AttachmentImagePreview";
 import type { MessageAttachment, Message, Server, User, ImageDecryptContext } from "./_chat_components/types";
 import { useWebRTC, type CallState } from "../../../utils/useWebRTC";
@@ -69,9 +73,21 @@ import {
   fetchUserRoles,
   uploadAttachment,
   downloadAttachment,
+  createServerDocument,
+  createConversationDocument,
+  fetchServerDocuments,
+  fetchConversationDocuments,
+  fetchDocument,
+  updateDocument,
+  deleteDocument,
+  saveDocumentVersion,
+  fetchDocumentVersions,
+  fetchDocumentVersion,
   ConversationData,
   DirectMessageData,
   AttachmentData,
+  CollabDocumentData,
+  DocumentVersionData,
 } from "../../../utils/api";
 import { useAuth } from "../../../utils/AuthContext";
 import { useWebSocket } from "../../../utils/useWebSocket";
@@ -190,6 +206,8 @@ const ChatPage: React.FC = () => {
   const [encryptionReady, setEncryptionReady] = useState(false);
   // Ref for sendKeyNeeded (populated after useWebSocket hook) so fetchAndCacheServerKey can use it
   const sendKeyNeededRef = useRef<(() => void) | null>(null);
+  // Ref for retryPendingDecryptions — populated after function is defined
+  const retryPendingDecryptionsRef = useRef<(() => void) | null>(null);
 
   // ─── Call State ─────────────────────────────────────────────────
   const [callMinimized, setCallMinimized] = useState(false);
@@ -199,6 +217,51 @@ const ChatPage: React.FC = () => {
   // ─── Permission State ──────────────────────────────────────────
   const [channelPermissionDenied, setChannelPermissionDenied] = useState(false);
   const [canSendMessages, setCanSendMessages] = useState(true);
+
+  // ─── Collaborative Documents State ────────────────────────────
+  const [showDocPanel, setShowDocPanel] = useState(false);
+  const [collabDocuments, setCollabDocuments] = useState<CollabDocumentData[]>([]);
+  const [selectedDocument, setSelectedDocument] = useState<CollabDocumentData | null>(null);
+  const [selectedDocVersion, setSelectedDocVersion] = useState<DocumentVersionData | null>(null);
+  const [docVersions, setDocVersions] = useState<DocumentVersionData[]>([]);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [isSavingDoc, setIsSavingDoc] = useState(false);
+  // Ref for selectedDocument to avoid stale closures in WS callbacks
+  const selectedDocumentRef = useRef<CollabDocumentData | null>(null);
+  selectedDocumentRef.current = selectedDocument;
+  // Remote editing state — passed to editors as props
+  const [remoteDocContent, setRemoteDocContent] = useState<string | undefined>(undefined);
+  const [remoteDocContentVersion, setRemoteDocContentVersion] = useState(0);
+  const [remoteWbAction, setRemoteWbAction] = useState<any>(undefined);
+  const [remoteWbActionVersion, setRemoteWbActionVersion] = useState(0);
+
+  // Refs for document WS callbacks (avoids "used before declaration" errors)
+  const handleWsDocCreatedRef = useRef<((doc: any) => void) | null>(null);
+  const handleWsDocDeletedRef = useRef<((docId: number) => void) | null>(null);
+  const handleWsDocRenamedRef = useRef<((docId: number, title: string) => void) | null>(null);
+  const handleWsDocEditRef = useRef<((docId: number, content: string, userId: number) => void) | null>(null);
+  const handleWsWhiteboardActionRef = useRef<((docId: number, action: any, userId: number) => void) | null>(null);
+  const handleDmWsDocCreatedRef = useRef<((doc: any, convId: number) => void) | null>(null);
+  const handleDmWsDocDeletedRef = useRef<((docId: number, convId: number) => void) | null>(null);
+  const handleDmWsDocRenamedRef = useRef<((docId: number, title: string, convId: number) => void) | null>(null);
+  const handleDmWsDocEditRef = useRef<((docId: number, content: string, convId: number, userId: number) => void) | null>(null);
+  const handleDmWsWhiteboardActionRef = useRef<((docId: number, action: any, convId: number, userId: number) => void) | null>(null);
+
+  // Refs for undo/redo/cursor WS callbacks
+  const handleWsWhiteboardUndoRef = useRef<((docId: number, userId: number) => void) | null>(null);
+  const handleWsWhiteboardRedoRef = useRef<((docId: number, userId: number) => void) | null>(null);
+  const handleWsCursorUpdateRef = useRef<((docId: number, cursorType: string, position: any, userId: number, username: string) => void) | null>(null);
+  const handleDmWsWhiteboardUndoRef = useRef<((docId: number, convId: number, userId: number) => void) | null>(null);
+  const handleDmWsWhiteboardRedoRef = useRef<((docId: number, convId: number, userId: number) => void) | null>(null);
+  const handleDmWsCursorUpdateRef = useRef<((docId: number, cursorType: string, position: any, convId: number, userId: number, username: string) => void) | null>(null);
+
+  // Remote undo/redo version counters
+  const [remoteWbUndo, setRemoteWbUndo] = useState(0);
+  const [remoteWbRedo, setRemoteWbRedo] = useState(0);
+
+  // Remote cursors state: { [userId]: { userId, username, x?, y?, offset?, documentId } }
+  const [remoteCursors, setRemoteCursors] = useState<Record<number, { userId: number; username: string; x?: number; y?: number; offset?: number; documentId: number }>>({});
+  const cursorCleanupTimersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 
   // Determine which mode we're in
   const isDmMode = selectedConversationId !== null && selectedServer === null;
@@ -246,6 +309,7 @@ const ChatPage: React.FC = () => {
     if (message.server_id && message.server_id !== currentServer.id) return;
 
     let decryptedContent = message.content;
+    let encryptionRetryFields: Partial<Message> = {};
     if (message.is_encrypted && message.nonce) {
       let serverKeyBytes = await getServerKey(currentServer.id);
       // If no cached key, try fetching it now (it may have been redistributed)
@@ -269,8 +333,8 @@ const ChatPage: React.FC = () => {
               if (decryptedKey) {
                 await storeServerKey(currentServer.id, decryptedKey);
                 serverKeyBytes = decryptedKey;
-                // Key just became available — reload all messages to decrypt them
-                loadMessagesRef.current?.();
+                // Key just became available — retry any pending decryptions
+                retryPendingDecryptionsRef.current?.();
               }
             }
           }
@@ -280,12 +344,28 @@ const ChatPage: React.FC = () => {
       }
       if (serverKeyBytes) {
         const plaintext = decryptServerMessage(message.content, message.nonce, serverKeyBytes);
-        decryptedContent = plaintext || "[Could not decrypt]";
+        if (plaintext) {
+          decryptedContent = plaintext;
+        } else {
+          // Decryption returned null — store raw data for retry
+          decryptedContent = "[Could not decrypt]";
+          encryptionRetryFields = {
+            _encrypted: true,
+            _rawContent: message.content,
+            _rawNonce: message.nonce,
+          };
+        }
       } else {
+        // No key available — store raw data for retry when key arrives
         decryptedContent = "[Encrypted]";
+        encryptionRetryFields = {
+          _encrypted: true,
+          _rawContent: message.content,
+          _rawNonce: message.nonce,
+        };
       }
     }
-    const decryptedMsg = { ...message, content: decryptedContent };
+    const decryptedMsg: Message = { ...message, content: decryptedContent, ...encryptionRetryFields };
     setMessages((prev) => {
       if (prev.some(m => m.id === decryptedMsg.id)) return prev;
       return [...prev, decryptedMsg];
@@ -294,20 +374,31 @@ const ChatPage: React.FC = () => {
 
   const handleWsMessageEdited = useCallback(async (messageId: number, content: string, isEncrypted?: boolean, nonce?: string) => {
     let decryptedContent = content;
+    let retryFields: Partial<Message> = {};
     if (isEncrypted && nonce) {
       const currentServer = selectedServerRef.current;
       if (currentServer) {
         const serverKeyBytes = await getServerKey(currentServer.id);
         if (serverKeyBytes) {
           const plaintext = decryptServerMessage(content, nonce, serverKeyBytes);
-          decryptedContent = plaintext || "[Could not decrypt]";
+          if (plaintext) {
+            decryptedContent = plaintext;
+            retryFields = { _encrypted: false, _rawContent: undefined, _rawNonce: undefined };
+          } else {
+            decryptedContent = "[Could not decrypt]";
+            retryFields = { _encrypted: true, _rawContent: content, _rawNonce: nonce };
+          }
         } else {
           decryptedContent = "[Encrypted]";
+          retryFields = { _encrypted: true, _rawContent: content, _rawNonce: nonce };
         }
       }
+    } else {
+      // Not encrypted or no nonce — clear retry fields
+      retryFields = { _encrypted: false, _rawContent: undefined, _rawNonce: undefined };
     }
     setMessages((prev) =>
-      prev.map((m) => (m.id === messageId ? { ...m, content: decryptedContent } : m))
+      prev.map((m) => (m.id === messageId ? { ...m, content: decryptedContent, ...retryFields } : m))
     );
   }, []);
 
@@ -386,17 +477,24 @@ const ChatPage: React.FC = () => {
       }
       const data = await res.json();
       setChannelPermissionDenied(false);
-      // Decrypt server messages using the cached key
+      // Decrypt server messages using the cached key, storing raw data for retry on failure
       let serverKeyBytes = await getServerKey(selectedServer.id);
       const decryptedData = data.map((m: any) => {
         let content = m.content;
+        let retryFields: Partial<Message> = {};
         if (m.is_encrypted && m.nonce && serverKeyBytes) {
           const plaintext = decryptServerMessage(m.content, m.nonce, serverKeyBytes);
-          content = plaintext || "[Could not decrypt]";
+          if (plaintext) {
+            content = plaintext;
+          } else {
+            content = "[Could not decrypt]";
+            retryFields = { _encrypted: true, _rawContent: m.content, _rawNonce: m.nonce };
+          }
         } else if (m.is_encrypted) {
           content = "[Encrypted]";
+          retryFields = { _encrypted: true, _rawContent: m.content, _rawNonce: m.nonce };
         }
-        return { ...m, content };
+        return { ...m, content, ...retryFields };
       });
       setMessages(decryptedData);
     } catch {
@@ -420,13 +518,20 @@ const ChatPage: React.FC = () => {
             }
             const decryptedMissed = missed.map((m: any) => {
               let content = m.content;
+              let retryFields: Partial<Message> = {};
               if (m.is_encrypted && m.nonce && serverKeyBytes) {
                 const plaintext = decryptServerMessage(m.content, m.nonce, serverKeyBytes);
-                content = plaintext || "[Could not decrypt]";
+                if (plaintext) {
+                  content = plaintext;
+                } else {
+                  content = "[Could not decrypt]";
+                  retryFields = { _encrypted: true, _rawContent: m.content, _rawNonce: m.nonce };
+                }
               } else if (m.is_encrypted) {
                 content = "[Encrypted]";
+                retryFields = { _encrypted: true, _rawContent: m.content, _rawNonce: m.nonce };
               }
-              return { ...m, content };
+              return { ...m, content, ...retryFields };
             });
             setMessages((prev) => {
               const existingIds = new Set(prev.map(m => m.id));
@@ -434,6 +539,9 @@ const ChatPage: React.FC = () => {
               return [...prev, ...newMsgs];
             });
           }
+          // After reconnection sync, retry any previously pending decryptions
+          // (key may have become available while disconnected)
+          retryPendingDecryptionsRef.current?.();
         } catch {
           loadMessagesRef.current?.();
         }
@@ -484,16 +592,83 @@ const ChatPage: React.FC = () => {
             );
             if (serverKeyBytes) {
               await storeServerKey(serverId, serverKeyBytes);
-              // Reload messages with the new key
+              // Retry any pending decryptions with the new key, then reload remaining
+              retryPendingDecryptionsRef.current?.();
               loadMessagesRef.current?.();
             }
           }
         }
       } catch {
-        // Key not available for us yet
+        // Key not available yet
       }
     }
   }, []);
+
+  // ─── Retry Pending Decryptions ──────────────────────────────────
+  // Re-attempts decryption on any messages that still have _encrypted === true.
+  // Called after a server key becomes available or keys are updated.
+  const retryPendingDecryptions = useCallback(async () => {
+    const currentServer = selectedServerRef.current;
+    const currentConversationId = selectedConversationIdRef.current;
+
+    // Server messages retry
+    if (currentServer) {
+      const serverKeyBytes = await getServerKey(currentServer.id);
+      if (serverKeyBytes) {
+        setMessages((prev) => {
+          let changed = false;
+          const updated = prev.map((m) => {
+            if (!m._encrypted || !m._rawContent || !m._rawNonce) return m;
+            const plaintext = decryptServerMessage(m._rawContent, m._rawNonce, serverKeyBytes);
+            if (plaintext) {
+              changed = true;
+              return {
+                ...m,
+                content: plaintext,
+                _encrypted: false,
+                _rawContent: undefined,
+                _rawNonce: undefined,
+              };
+            }
+            return m;
+          });
+          return changed ? updated : prev;
+        });
+      }
+    }
+
+    // DM messages retry
+    if (currentConversationId && myKeyPairRef.current) {
+      setDmMessages((prev) => {
+        let changed = false;
+        const updated = prev.map((m) => {
+          if (!m._encrypted || !m._rawContent || !m._rawNonce || !m._senderPublicKey) return m;
+          try {
+            const senderPubKey = decodeBase64(m._senderPublicKey);
+            const plaintext = decryptDmMessage(m._rawContent, m._rawNonce, senderPubKey, myKeyPairRef.current!.secretKey);
+            if (plaintext) {
+              changed = true;
+              return {
+                ...m,
+                content: plaintext,
+                _encrypted: false,
+                _rawContent: undefined,
+                _rawNonce: undefined,
+                _senderPublicKey: undefined,
+              };
+            }
+          } catch {
+            // Decryption still failing
+          }
+          return m;
+        });
+        return changed ? updated : prev;
+      });
+    }
+  }, []);
+
+  // Keep the ref in sync so WS callbacks can call the latest version
+  retryPendingDecryptionsRef.current = retryPendingDecryptions;
 
   // When another member needs a key, redistribute if we have it
   const handleKeyNeeded = useCallback(async (serverId: number, requestingUserId: number) => {
@@ -560,6 +735,9 @@ const ChatPage: React.FC = () => {
   const {
     isConnected, sendTyping, sendStopTyping, sendAck, sendKeyNeeded,
     sendVoiceJoin, sendVoiceLeave, sendVoiceOffer, sendVoiceAnswer, sendVoiceIceCandidate,
+    sendDocEdit: sendServerDocEdit, sendWhiteboardAction: sendServerWhiteboardAction,
+    sendWhiteboardUndo: sendServerWhiteboardUndo, sendWhiteboardRedo: sendServerWhiteboardRedo,
+    sendCursorUpdate: sendServerCursorUpdate,
   } = useWebSocket({
     serverId: selectedServer?.id ?? null,
     token,
@@ -580,6 +758,14 @@ const ChatPage: React.FC = () => {
     onVoiceAnswer: (channelId, fromUserId, answer) => voiceHandlersRef.current.onAnswer?.(channelId, fromUserId, answer),
     onVoiceIceCandidate: (channelId, fromUserId, candidate) => voiceHandlersRef.current.onIceCandidate?.(channelId, fromUserId, candidate),
     onVoiceChannelUsers: (channelId, users) => voiceHandlersRef.current.onChannelUsers?.(channelId, users),
+    onDocCreated: (doc: any) => handleWsDocCreatedRef.current?.(doc),
+    onDocDeleted: (docId: any) => handleWsDocDeletedRef.current?.(docId),
+    onDocRenamed: (docId: any, title: any) => handleWsDocRenamedRef.current?.(docId, title),
+    onDocEdit: (docId: any, content: any, userId: any) => handleWsDocEditRef.current?.(docId, content, userId),
+    onWhiteboardAction: (docId: any, action: any, userId: any) => handleWsWhiteboardActionRef.current?.(docId, action, userId),
+    onWhiteboardUndo: (docId: any, userId: any) => handleWsWhiteboardUndoRef.current?.(docId, userId),
+    onWhiteboardRedo: (docId: any, userId: any) => handleWsWhiteboardRedoRef.current?.(docId, userId),
+    onCursorUpdate: (docId: any, cursorType: any, position: any, userId: any, username: any) => handleWsCursorUpdateRef.current?.(docId, cursorType, position, userId, username),
   });
 
   // Keep sendKeyNeeded ref in sync so fetchAndCacheServerKey can request key redistribution
@@ -610,10 +796,32 @@ const ChatPage: React.FC = () => {
   const handleDmNewMessage = useCallback(async (conversationId: number, message: any) => {
     // Decrypt incoming DM if encrypted
     let decryptedContent = message.content;
-    if (message.is_encrypted && message.nonce && message.sender_public_key && myKeyPairRef.current) {
-      const senderPubKey = decodeBase64(message.sender_public_key);
-      const plaintext = decryptDmMessage(message.content, message.nonce, senderPubKey, myKeyPairRef.current.secretKey);
-      decryptedContent = plaintext || "[Could not decrypt]";
+    let dmRetryFields: Partial<Message> = {};
+    if (message.is_encrypted && message.nonce) {
+      if (message.sender_public_key && myKeyPairRef.current) {
+        const senderPubKey = decodeBase64(message.sender_public_key);
+        const plaintext = decryptDmMessage(message.content, message.nonce, senderPubKey, myKeyPairRef.current.secretKey);
+        if (plaintext) {
+          decryptedContent = plaintext;
+        } else {
+          decryptedContent = "[Could not decrypt]";
+          dmRetryFields = {
+            _encrypted: true,
+            _rawContent: message.content,
+            _rawNonce: message.nonce,
+            _senderPublicKey: message.sender_public_key,
+          };
+        }
+      } else {
+        // sender_public_key missing or keypair not ready — store for retry
+        decryptedContent = message.sender_public_key ? "[Encrypted]" : "[Encrypted - missing sender key]";
+        dmRetryFields = {
+          _encrypted: true,
+          _rawContent: message.content,
+          _rawNonce: message.nonce,
+          _senderPublicKey: message.sender_public_key || undefined,
+        };
+      }
     }
 
     const currentSelectedId = selectedConversationIdRef.current;
@@ -627,6 +835,7 @@ const ChatPage: React.FC = () => {
           user_id: message.user_id,
           timestamp: message.created_at,
           attachment: message.attachment || null,
+          ...dmRetryFields,
         }];
       });
     } else {
@@ -657,13 +866,27 @@ const ChatPage: React.FC = () => {
   const handleDmMessageEdited = useCallback(async (conversationId: number, messageId: number, content: string, isEncrypted?: boolean, nonce?: string, senderPublicKey?: string) => {
     if (conversationId !== selectedConversationIdRef.current) return;
     let decryptedContent = content;
-    if (isEncrypted && nonce && senderPublicKey && myKeyPairRef.current) {
-      const senderPubKey = decodeBase64(senderPublicKey);
-      const plaintext = decryptDmMessage(content, nonce, senderPubKey, myKeyPairRef.current.secretKey);
-      decryptedContent = plaintext || "[Could not decrypt]";
+    let retryFields: Partial<Message> = {};
+    if (isEncrypted && nonce) {
+      if (senderPublicKey && myKeyPairRef.current) {
+        const senderPubKey = decodeBase64(senderPublicKey);
+        const plaintext = decryptDmMessage(content, nonce, senderPubKey, myKeyPairRef.current.secretKey);
+        if (plaintext) {
+          decryptedContent = plaintext;
+          retryFields = { _encrypted: false, _rawContent: undefined, _rawNonce: undefined, _senderPublicKey: undefined };
+        } else {
+          decryptedContent = "[Could not decrypt]";
+          retryFields = { _encrypted: true, _rawContent: content, _rawNonce: nonce, _senderPublicKey: senderPublicKey };
+        }
+      } else {
+        decryptedContent = "[Encrypted]";
+        retryFields = { _encrypted: true, _rawContent: content, _rawNonce: nonce, _senderPublicKey: senderPublicKey || undefined };
+      }
+    } else {
+      retryFields = { _encrypted: false, _rawContent: undefined, _rawNonce: undefined, _senderPublicKey: undefined };
     }
     setDmMessages((prev) =>
-      prev.map((m) => (m.id === messageId ? { ...m, content: decryptedContent } : m))
+      prev.map((m) => (m.id === messageId ? { ...m, content: decryptedContent, ...retryFields } : m))
     );
   }, []);
 
@@ -743,6 +966,11 @@ const ChatPage: React.FC = () => {
     sendCallIceCandidate,
     sendCallReject,
     sendCallHangup,
+    sendDocEdit: sendDmDocEdit,
+    sendWhiteboardAction: sendDmWhiteboardAction,
+    sendWhiteboardUndo: sendDmWhiteboardUndo,
+    sendWhiteboardRedo: sendDmWhiteboardRedo,
+    sendCursorUpdate: sendDmCursorUpdate,
   } = useDmWebSocket({
     token,
     refreshAccessToken,
@@ -771,6 +999,14 @@ const ChatPage: React.FC = () => {
     onCallHangup: (fromUserId, callId) => {
       handleCallSignalingRef.current?.({ type: "call_hangup", from_user_id: fromUserId, call_id: callId });
     },
+    onDocCreated: (doc: any, convId: any) => handleDmWsDocCreatedRef.current?.(doc, convId),
+    onDocDeleted: (docId: any, convId: any) => handleDmWsDocDeletedRef.current?.(docId, convId),
+    onDocRenamed: (docId: any, title: any, convId: any) => handleDmWsDocRenamedRef.current?.(docId, title, convId),
+    onDocEdit: (docId: any, content: any, convId: any, userId: any) => handleDmWsDocEditRef.current?.(docId, content, convId, userId),
+    onWhiteboardAction: (docId: any, action: any, convId: any, userId: any) => handleDmWsWhiteboardActionRef.current?.(docId, action, convId, userId),
+    onWhiteboardUndo: (docId: any, convId: any, userId: any) => handleDmWsWhiteboardUndoRef.current?.(docId, convId, userId),
+    onWhiteboardRedo: (docId: any, convId: any, userId: any) => handleDmWsWhiteboardRedoRef.current?.(docId, convId, userId),
+    onCursorUpdate: (docId: any, cursorType: any, position: any, convId: any, userId: any, username: any) => handleDmWsCursorUpdateRef.current?.(docId, cursorType, position, convId, userId, username),
   });
 
   // ─── WebRTC Call Hook ──────────────────────────────────────────
@@ -902,6 +1138,13 @@ const ChatPage: React.FC = () => {
     };
     initEncryption();
   }, [token, logout, refreshAccessToken]);
+
+  // When encryption becomes ready, retry messages that arrived before keypair was available
+  useEffect(() => {
+    if (encryptionReady && myKeyPairRef.current) {
+      retryPendingDecryptionsRef.current?.();
+    }
+  }, [encryptionReady]);
 
   // ─── Decrypt helper for messages ──────────────────────────────
   const decryptMessageContent = useCallback(async (msg: any, mode: "dm" | "server"): Promise<string> => {
@@ -1116,7 +1359,11 @@ const ChatPage: React.FC = () => {
       // Note: loadMessagesRef.current handles fetchAndCacheServerKey before decrypting
       if (encryptionReady) {
         fetchAndCacheServerKey(server.id).then((success) => {
-          if (success) redistributeServerKey(server.id);
+          if (success) {
+            redistributeServerKey(server.id);
+            // Retry any pending decryptions now that the key is available
+            retryPendingDecryptionsRef.current?.();
+          }
         });
       }
     }
@@ -1166,6 +1413,397 @@ const ChatPage: React.FC = () => {
     handleSelectConversation(conversationId);
     loadConversations();
   };
+
+  // ─── Collaborative Document Handlers ───────────────────────────
+
+  const loadDocuments = useCallback(async () => {
+    if (!token) return;
+    try {
+      let docs: CollabDocumentData[];
+      if (isDmMode && selectedConversationId) {
+        docs = await fetchConversationDocuments(token, selectedConversationId, logout);
+      } else if (selectedServer) {
+        docs = await fetchServerDocuments(token, selectedServer.id, logout);
+      } else {
+        return;
+      }
+      setCollabDocuments(docs);
+    } catch {
+    }
+  }, [token, isDmMode, selectedConversationId, selectedServer, logout]);
+
+  // Load documents when server/conversation changes
+  useEffect(() => {
+    if (token && (selectedServer || selectedConversationId)) {
+      loadDocuments();
+    } else {
+      setCollabDocuments([]);
+    }
+    // Close document panel when switching server/conversation
+    setSelectedDocument(null);
+    setShowDocPanel(false);
+    setShowVersionHistory(false);
+  }, [selectedServer?.id, selectedConversationId, token]);
+
+  const handleCreateDocument = useCallback(async (title: string, docType: "document" | "whiteboard") => {
+    if (!token) return;
+    try {
+      let doc: CollabDocumentData;
+      if (isDmMode && selectedConversationId) {
+        doc = await createConversationDocument(token, selectedConversationId, title, docType, logout);
+      } else if (selectedServer) {
+        doc = await createServerDocument(token, selectedServer.id, title, docType, logout);
+      } else {
+        return;
+      }
+      setCollabDocuments(prev => [doc, ...prev]);
+      showSnackbarRef.current(`Created "${title}"`);
+    } catch {
+      showSnackbarRef.current("Failed to create document");
+    }
+  }, [token, isDmMode, selectedConversationId, selectedServer, logout]);
+
+  // Helper: decrypt a document version's content if encrypted
+  const decryptDocVersionContent = useCallback(async (version: DocumentVersionData, doc: CollabDocumentData): Promise<DocumentVersionData> => {
+    if (!version.nonce) return version; // Not encrypted
+    try {
+      if (doc.server_id) {
+        // Server document — decrypt with server key
+        const serverKeyBytes = await getServerKey(doc.server_id);
+        if (serverKeyBytes) {
+          const plaintext = decryptServerMessage(version.content, version.nonce, serverKeyBytes);
+          if (plaintext) return { ...version, content: plaintext };
+        }
+      } 
+    } catch {
+      // Decryption failed — return raw content
+    }
+    return version;
+  }, []);
+
+  const handleSelectDocument = useCallback(async (doc: CollabDocumentData) => {
+    setSelectedDocument(doc);
+    setShowVersionHistory(false);
+    setSelectedDocVersion(null);
+    setRemoteCursors({}); // Clear remote cursors when switching documents
+    // Load latest version
+    if (!token) return;
+    try {
+      const versions = await fetchDocumentVersions(token, doc.id, logout);
+      setDocVersions(versions);
+      if (versions.length > 0) {
+        // Get latest version content and decrypt if needed
+        const latest = await fetchDocumentVersion(token, doc.id, versions[0].id, logout);
+        const decrypted = await decryptDocVersionContent(latest, doc);
+        setSelectedDocVersion(decrypted);
+      } else {
+        setSelectedDocVersion(null);
+      }
+    } catch {
+      setDocVersions([]);
+      setSelectedDocVersion(null);
+    }
+  }, [token, logout, decryptDocVersionContent]);
+
+  const handleDeleteDocument = useCallback(async (docId: number) => {
+    if (!token) return;
+    try {
+      await deleteDocument(token, docId, logout);
+      setCollabDocuments(prev => prev.filter(d => d.id !== docId));
+      if (selectedDocument?.id === docId) {
+        setSelectedDocument(null);
+        setSelectedDocVersion(null);
+        setDocVersions([]);
+        setShowVersionHistory(false);
+      }
+      showSnackbarRef.current("Document deleted");
+    } catch {
+      showSnackbarRef.current("Failed to delete document");
+    }
+  }, [token, selectedDocument, logout]);
+
+  const handleRenameDocument = useCallback(async (docId: number, newTitle: string) => {
+    if (!token) return;
+    try {
+      const updated = await updateDocument(token, docId, newTitle, logout);
+      setCollabDocuments(prev => prev.map(d => d.id === docId ? { ...d, title: updated.title } : d));
+      if (selectedDocument?.id === docId) {
+        setSelectedDocument(prev => prev ? { ...prev, title: updated.title } : prev);
+      }
+    } catch {
+      showSnackbarRef.current("Failed to rename document");
+    }
+  }, [token, selectedDocument, logout]);
+
+  const handleSaveDocumentContent = useCallback(async (content: string) => {
+    if (!token || !selectedDocument) return;
+    setIsSavingDoc(true);
+    try {
+      let contentToSave = content;
+      let nonceToSave: string | null = null;
+
+      // Encrypt if document is in a server with an available key
+      if (selectedDocument.server_id) {
+        const serverKeyBytes = await getServerKey(selectedDocument.server_id);
+        if (serverKeyBytes) {
+          const encrypted = encryptServerMessage(content, serverKeyBytes);
+          if (encrypted) {
+            contentToSave = encrypted.ciphertext;
+            nonceToSave = encrypted.nonce;
+          }
+        }
+      }
+
+      const newVersion = await saveDocumentVersion(token, selectedDocument.id, contentToSave, nonceToSave, logout);
+      // Store the decrypted content in local state so the editor shows plaintext
+      setDocVersions(prev => [newVersion, ...prev]);
+      setSelectedDocVersion({ ...newVersion, content });
+      showSnackbarRef.current("Version saved");
+    } catch {
+      showSnackbarRef.current("Failed to save version");
+    } finally {
+      setIsSavingDoc(false);
+    }
+  }, [token, selectedDocument, logout]);
+
+  const handleShowVersionHistory = useCallback(async () => {
+    if (!token || !selectedDocument) return;
+    try {
+      const versions = await fetchDocumentVersions(token, selectedDocument.id, logout);
+      setDocVersions(versions);
+      setShowVersionHistory(true);
+    } catch {
+      showSnackbarRef.current("Failed to load versions");
+    }
+  }, [token, selectedDocument, logout]);
+
+  const handleSelectVersion = useCallback(async (version: DocumentVersionData) => {
+    if (!token || !selectedDocument) return;
+    try {
+      const fullVersion = await fetchDocumentVersion(token, selectedDocument.id, version.id, logout);
+      const decrypted = await decryptDocVersionContent(fullVersion, selectedDocument);
+      setSelectedDocVersion(decrypted);
+    } catch {
+      showSnackbarRef.current("Failed to load version");
+    }
+  }, [token, selectedDocument, logout, decryptDocVersionContent]);
+
+  const handleRestoreVersion = useCallback(async (version: DocumentVersionData) => {
+    if (!token || !selectedDocument) return;
+    try {
+      // Load the version content, decrypt it, then re-encrypt as a new version
+      const fullVersion = await fetchDocumentVersion(token, selectedDocument.id, version.id, logout);
+      const decrypted = await decryptDocVersionContent(fullVersion, selectedDocument);
+
+      // Re-encrypt the decrypted content for the new version
+      let contentToSave = decrypted.content;
+      let nonceToSave: string | null = null;
+      if (selectedDocument.server_id) {
+        const serverKeyBytes = await getServerKey(selectedDocument.server_id);
+        if (serverKeyBytes) {
+          const encrypted = encryptServerMessage(decrypted.content, serverKeyBytes);
+          if (encrypted) {
+            contentToSave = encrypted.ciphertext;
+            nonceToSave = encrypted.nonce;
+          }
+        }
+      }
+
+      const newVersion = await saveDocumentVersion(token, selectedDocument.id, contentToSave, nonceToSave, logout);
+      setDocVersions(prev => [newVersion, ...prev]);
+      setSelectedDocVersion({ ...newVersion, content: decrypted.content });
+      setShowVersionHistory(false);
+      showSnackbarRef.current(`Restored version ${version.version_number}`);
+    } catch {
+      showSnackbarRef.current("Failed to restore version");
+    }
+  }, [token, selectedDocument, logout, decryptDocVersionContent]);
+
+  const handleToggleDocPanel = useCallback(() => {
+    setShowDocPanel(prev => {
+      if (!prev) {
+        // Opening panel — load documents
+        loadDocuments();
+      }
+      return !prev;
+    });
+    // Close document editor if closing the panel
+    if (showDocPanel) {
+      setSelectedDocument(null);
+      setShowVersionHistory(false);
+    }
+  }, [showDocPanel, loadDocuments]);
+
+  const handleCloseDocumentEditor = useCallback(() => {
+    setSelectedDocument(null);
+    setSelectedDocVersion(null);
+    setDocVersions([]);
+    setShowVersionHistory(false);
+    setRemoteCursors({});
+  }, []);
+
+  // ─── Document WebSocket Callbacks ──────────────────────────────
+
+  const handleWsDocCreated = useCallback((document: CollabDocumentData) => {
+    setCollabDocuments(prev => {
+      if (prev.some(d => d.id === document.id)) return prev;
+      return [document, ...prev];
+    });
+  }, []);
+
+  const handleWsDocDeleted = useCallback((documentId: number) => {
+    setCollabDocuments(prev => prev.filter(d => d.id !== documentId));
+    if (selectedDocumentRef.current?.id === documentId) {
+      setSelectedDocument(null);
+      setSelectedDocVersion(null);
+      setDocVersions([]);
+      setShowVersionHistory(false);
+    }
+  }, []);
+
+  const handleWsDocRenamed = useCallback((documentId: number, title: string) => {
+    setCollabDocuments(prev => prev.map(d => d.id === documentId ? { ...d, title } : d));
+    if (selectedDocumentRef.current?.id === documentId) {
+      setSelectedDocument(prev => prev ? { ...prev, title } : prev);
+    }
+  }, []);
+
+  const handleWsDocEdit = useCallback((documentId: number, content: string, remoteUserId: number) => {
+    if (selectedDocumentRef.current?.id === documentId && remoteUserId !== userId) {
+      setRemoteDocContent(content);
+      setRemoteDocContentVersion(v => v + 1);
+    }
+  }, [userId]);
+
+  const handleWsWhiteboardAction = useCallback((documentId: number, action: any, remoteUserId: number) => {
+    if (selectedDocumentRef.current?.id === documentId && remoteUserId !== userId) {
+      setRemoteWbAction(action);
+      setRemoteWbActionVersion(v => v + 1);
+    }
+  }, [userId]);
+
+  // DM document callbacks (include conversationId check)
+  const handleDmWsDocCreated = useCallback((document: CollabDocumentData, conversationId: number) => {
+    if (selectedConversationIdRef.current === conversationId) {
+      setCollabDocuments(prev => {
+        if (prev.some(d => d.id === document.id)) return prev;
+        return [document, ...prev];
+      });
+    }
+  }, []);
+
+  const handleDmWsDocDeleted = useCallback((documentId: number, conversationId: number) => {
+    if (selectedConversationIdRef.current === conversationId) {
+      setCollabDocuments(prev => prev.filter(d => d.id !== documentId));
+    }
+    if (selectedDocumentRef.current?.id === documentId) {
+      setSelectedDocument(null);
+      setSelectedDocVersion(null);
+      setDocVersions([]);
+      setShowVersionHistory(false);
+    }
+  }, []);
+
+  const handleDmWsDocRenamed = useCallback((documentId: number, title: string, conversationId: number) => {
+    if (selectedConversationIdRef.current === conversationId) {
+      setCollabDocuments(prev => prev.map(d => d.id === documentId ? { ...d, title } : d));
+    }
+    if (selectedDocumentRef.current?.id === documentId) {
+      setSelectedDocument(prev => prev ? { ...prev, title } : prev);
+    }
+  }, []);
+
+  const handleDmWsDocEdit = useCallback((documentId: number, content: string, conversationId: number, remoteUserId: number) => {
+    if (selectedDocumentRef.current?.id === documentId && remoteUserId !== userId) {
+      setRemoteDocContent(content);
+      setRemoteDocContentVersion(v => v + 1);
+    }
+  }, [userId]);
+
+  const handleDmWsWhiteboardAction = useCallback((documentId: number, action: any, conversationId: number, remoteUserId: number) => {
+    if (selectedDocumentRef.current?.id === documentId && remoteUserId !== userId) {
+      setRemoteWbAction(action);
+      setRemoteWbActionVersion(v => v + 1);
+    }
+  }, [userId]);
+
+  // ─── Undo/Redo WS callbacks ────────────────────────────────────
+  const handleWsWhiteboardUndo = useCallback((documentId: number, remoteUserId: number) => {
+    if (selectedDocumentRef.current?.id === documentId && remoteUserId !== userId) {
+      setRemoteWbUndo(v => v + 1);
+    }
+  }, [userId]);
+
+  const handleWsWhiteboardRedo = useCallback((documentId: number, remoteUserId: number) => {
+    if (selectedDocumentRef.current?.id === documentId && remoteUserId !== userId) {
+      setRemoteWbRedo(v => v + 1);
+    }
+  }, [userId]);
+
+  const handleDmWsWhiteboardUndo = useCallback((documentId: number, conversationId: number, remoteUserId: number) => {
+    if (selectedDocumentRef.current?.id === documentId && remoteUserId !== userId) {
+      setRemoteWbUndo(v => v + 1);
+    }
+  }, [userId]);
+
+  const handleDmWsWhiteboardRedo = useCallback((documentId: number, conversationId: number, remoteUserId: number) => {
+    if (selectedDocumentRef.current?.id === documentId && remoteUserId !== userId) {
+      setRemoteWbRedo(v => v + 1);
+    }
+  }, [userId]);
+
+  // ─── Cursor Update WS callbacks ────────────────────────────────
+  const updateRemoteCursor = useCallback((documentId: number, cursorType: string, position: any, remoteUserId: number, remoteUsername: string) => {
+    if (selectedDocumentRef.current?.id !== documentId) return;
+    setRemoteCursors(prev => ({
+      ...prev,
+      [remoteUserId]: {
+        userId: remoteUserId,
+        username: remoteUsername,
+        ...(cursorType === "whiteboard" ? { x: position.x, y: position.y } : { offset: position.offset }),
+        documentId,
+      },
+    }));
+    // Reset stale cursor cleanup timer for this user
+    if (cursorCleanupTimersRef.current[remoteUserId]) {
+      clearTimeout(cursorCleanupTimersRef.current[remoteUserId]);
+    }
+    cursorCleanupTimersRef.current[remoteUserId] = setTimeout(() => {
+      setRemoteCursors(prev => {
+        const next = { ...prev };
+        delete next[remoteUserId];
+        return next;
+      });
+    }, 5000);
+  }, []);
+
+  const handleWsCursorUpdate = useCallback((documentId: number, cursorType: string, position: any, remoteUserId: number, remoteUsername: string) => {
+    if (remoteUserId === userId) return;
+    updateRemoteCursor(documentId, cursorType, position, remoteUserId, remoteUsername);
+  }, [userId, updateRemoteCursor]);
+
+  const handleDmWsCursorUpdate = useCallback((documentId: number, cursorType: string, position: any, conversationId: number, remoteUserId: number, remoteUsername: string) => {
+    if (remoteUserId === userId) return;
+    updateRemoteCursor(documentId, cursorType, position, remoteUserId, remoteUsername);
+  }, [userId, updateRemoteCursor]);
+
+  // Sync callback refs so the WS hooks (declared earlier) can call the latest handlers
+  handleWsDocCreatedRef.current = handleWsDocCreated;
+  handleWsDocDeletedRef.current = handleWsDocDeleted;
+  handleWsDocRenamedRef.current = handleWsDocRenamed;
+  handleWsDocEditRef.current = handleWsDocEdit;
+  handleWsWhiteboardActionRef.current = handleWsWhiteboardAction;
+  handleWsWhiteboardUndoRef.current = handleWsWhiteboardUndo;
+  handleWsWhiteboardRedoRef.current = handleWsWhiteboardRedo;
+  handleWsCursorUpdateRef.current = handleWsCursorUpdate;
+  handleDmWsDocCreatedRef.current = handleDmWsDocCreated;
+  handleDmWsDocDeletedRef.current = handleDmWsDocDeleted;
+  handleDmWsDocRenamedRef.current = handleDmWsDocRenamed;
+  handleDmWsDocEditRef.current = handleDmWsDocEdit;
+  handleDmWsWhiteboardActionRef.current = handleDmWsWhiteboardAction;
+  handleDmWsWhiteboardUndoRef.current = handleDmWsWhiteboardUndo;
+  handleDmWsWhiteboardRedoRef.current = handleDmWsWhiteboardRedo;
+  handleDmWsCursorUpdateRef.current = handleDmWsCursorUpdate;
 
   // Load servers
   useEffect(() => {
@@ -1230,10 +1868,21 @@ const ChatPage: React.FC = () => {
       // Decrypt encrypted messages
       const decryptedMessages = await Promise.all(data.map(async (m: any) => {
         let content = m.content;
-        if (m.is_encrypted && m.nonce && m.sender_public_key && myKeyPairRef.current) {
-          const senderPubKey = decodeBase64(m.sender_public_key);
-          const plaintext = decryptDmMessage(m.content, m.nonce, senderPubKey, myKeyPairRef.current.secretKey);
-          content = plaintext || "[Could not decrypt]";
+        let retryFields: Partial<Message> = {};
+        if (m.is_encrypted && m.nonce) {
+          if (m.sender_public_key && myKeyPairRef.current) {
+            const senderPubKey = decodeBase64(m.sender_public_key);
+            const plaintext = decryptDmMessage(m.content, m.nonce, senderPubKey, myKeyPairRef.current.secretKey);
+            if (plaintext) {
+              content = plaintext;
+            } else {
+              content = "[Could not decrypt]";
+              retryFields = { _encrypted: true, _rawContent: m.content, _rawNonce: m.nonce, _senderPublicKey: m.sender_public_key };
+            }
+          } else {
+            content = m.sender_public_key ? "[Encrypted]" : "[Encrypted - missing sender key]";
+            retryFields = { _encrypted: true, _rawContent: m.content, _rawNonce: m.nonce, _senderPublicKey: m.sender_public_key || undefined };
+          }
         }
         return {
           id: m.id,
@@ -1242,6 +1891,7 @@ const ChatPage: React.FC = () => {
           user_id: m.user_id,
           timestamp: m.created_at,
           attachment: m.attachment || null,
+          ...retryFields,
         };
       }));
       setDmMessages(decryptedMessages);
@@ -2044,6 +2694,8 @@ const ChatPage: React.FC = () => {
                 onToggleUserSidebar={() => setShowUserSidebar(true)}
                 onOpenSettings={() => setIsServerSettingsOpen(true)}
                 onStartCall={startDmCall}
+                onToggleDocuments={handleToggleDocPanel}
+                documentCount={collabDocuments.length}
               />
 
               {/* Active call minimized bar */}
@@ -2078,80 +2730,185 @@ const ChatPage: React.FC = () => {
                 />
               )}
 
-              {/* Messages List */}
-              <KeyboardAvoidingView
-                behavior={Platform.OS === "ios" ? "padding" : "height"}
-                style={{ flex: 1 }}
-                keyboardVerticalOffset={Platform.OS === "ios" ? (isMobile ? 90 : 100) : 0}
-              >
-                <YStack flex={1} backgroundColor="#36393f">
-                  {error && !channelPermissionDenied && (
-                    <Card
-                      backgroundColor="#f44336"
-                      padding="$3"
-                      margin="$3"
-                      borderRadius="$3"
-                    >
-                      <Text color="white" fontWeight="600" fontSize={isMobile ? "$3" : "$2"}>
-                        {error}
-                      </Text>
-                    </Card>
-                  )}
-                  {channelPermissionDenied && !isDmMode ? (
-                    <YStack flex={1} justifyContent="center" alignItems="center" padding="$4">
-                      <YStack
-                        backgroundColor="rgba(255, 152, 0, 0.15)"
-                        borderWidth={1}
-                        borderColor="#ff9800"
-                        borderRadius="$4"
-                        padding="$4"
-                        maxWidth={400}
-                        alignItems="center"
-                        gap="$2"
-                      >
-                        <Text color="#ff9800" fontWeight="700" fontSize="$5" textAlign="center">
-                          Permission Denied
-                        </Text>
-                        <Text color="#ffb74d" fontSize="$3" textAlign="center">
-                          You don't have permission to view messages in this channel. Contact a server admin to update your role.
-                        </Text>
-                      </YStack>
+              {/* Main content area: Chat + Document panels */}
+              <XStack flex={1}>
+                {/* Document List Panel (side panel) */}
+                {showDocPanel && !selectedDocument && (
+                  <DocumentListPanel
+                    documents={collabDocuments}
+                    onCreateDocument={handleCreateDocument}
+                    onSelectDocument={handleSelectDocument}
+                    onDeleteDocument={handleDeleteDocument}
+                    onRenameDocument={handleRenameDocument}
+                    onClose={() => setShowDocPanel(false)}
+                    selectedDocId={null}
+                    isMobile={isMobile}
+                  />
+                )}
+
+                {/* Document/Whiteboard Editor (replaces chat when open) */}
+                {selectedDocument ? (
+                  <XStack flex={1}>
+                    {/* Version History Panel */}
+                    {showVersionHistory && (
+                      <VersionHistoryPanel
+                        versions={docVersions}
+                        onSelectVersion={handleSelectVersion}
+                        onRestoreVersion={handleRestoreVersion}
+                        onClose={() => setShowVersionHistory(false)}
+                        currentVersionId={selectedDocVersion?.id}
+                      />
+                    )}
+                    {/* Editor */}
+                    {selectedDocument.doc_type === "whiteboard" ? (
+                      <WhiteboardEditor
+                        document={selectedDocument}
+                        latestVersion={selectedDocVersion}
+                        onSave={handleSaveDocumentContent}
+                        onClose={handleCloseDocumentEditor}
+                        isMobile={isMobile}
+                        isSaving={isSavingDoc}
+                        onShowVersions={handleShowVersionHistory}
+                        onActionBroadcast={(action) => {
+                          if (isDmMode && selectedConversationId && selectedDocument) {
+                            sendDmWhiteboardAction(selectedConversationId, selectedDocument.id, action);
+                          } else if (selectedDocument) {
+                            sendServerWhiteboardAction(selectedDocument.id, action);
+                          }
+                        }}
+                        remoteAction={remoteWbAction}
+                        remoteActionVersion={remoteWbActionVersion}
+                        onUndoBroadcast={() => {
+                          if (isDmMode && selectedConversationId && selectedDocument) {
+                            sendDmWhiteboardUndo(selectedConversationId, selectedDocument.id);
+                          } else if (selectedDocument) {
+                            sendServerWhiteboardUndo(selectedDocument.id);
+                          }
+                        }}
+                        onRedoBroadcast={() => {
+                          if (isDmMode && selectedConversationId && selectedDocument) {
+                            sendDmWhiteboardRedo(selectedConversationId, selectedDocument.id);
+                          } else if (selectedDocument) {
+                            sendServerWhiteboardRedo(selectedDocument.id);
+                          }
+                        }}
+                        remoteUndo={remoteWbUndo}
+                        remoteRedo={remoteWbRedo}
+                        onCursorBroadcast={(position) => {
+                          if (isDmMode && selectedConversationId && selectedDocument) {
+                            sendDmCursorUpdate(selectedConversationId, selectedDocument.id, "whiteboard", position);
+                          } else if (selectedDocument) {
+                            sendServerCursorUpdate(selectedDocument.id, "whiteboard", position);
+                          }
+                        }}
+                        remoteCursors={selectedDocument ? Object.values(remoteCursors).filter(c => c.documentId === selectedDocument.id && c.x !== undefined).map(c => ({ userId: c.userId, username: c.username, x: c.x!, y: c.y! })) : []}
+                      />
+                    ) : (
+                      <DocumentEditor
+                        document={selectedDocument}
+                        latestVersion={selectedDocVersion}
+                        onSave={handleSaveDocumentContent}
+                        onClose={handleCloseDocumentEditor}
+                        isMobile={isMobile}
+                        isSaving={isSavingDoc}
+                        onShowVersions={handleShowVersionHistory}
+                        onContentBroadcast={(content) => {
+                          if (isDmMode && selectedConversationId && selectedDocument) {
+                            sendDmDocEdit(selectedConversationId, selectedDocument.id, content);
+                          } else if (selectedDocument) {
+                            sendServerDocEdit(selectedDocument.id, content);
+                          }
+                        }}
+                        remoteContent={remoteDocContent}
+                        remoteContentVersion={remoteDocContentVersion}
+                        onCursorBroadcast={(offset) => {
+                          if (isDmMode && selectedConversationId && selectedDocument) {
+                            sendDmCursorUpdate(selectedConversationId, selectedDocument.id, "document", { offset });
+                          } else if (selectedDocument) {
+                            sendServerCursorUpdate(selectedDocument.id, "document", { offset });
+                          }
+                        }}
+                        remoteCursors={selectedDocument ? Object.values(remoteCursors).filter(c => c.documentId === selectedDocument.id && c.offset !== undefined).map(c => ({ userId: c.userId, username: c.username, offset: c.offset! })) : []}
+                      />
+                    )}
+                  </XStack>
+                ) : (
+                  /* Regular chat view */
+                  <KeyboardAvoidingView
+                    behavior={Platform.OS === "ios" ? "padding" : "height"}
+                    style={{ flex: 1 }}
+                    keyboardVerticalOffset={Platform.OS === "ios" ? (isMobile ? 90 : 100) : 0}
+                  >
+                    <YStack flex={1} backgroundColor="#36393f">
+                      {error && !channelPermissionDenied && (
+                        <Card
+                          backgroundColor="#f44336"
+                          padding="$3"
+                          margin="$3"
+                          borderRadius="$3"
+                        >
+                          <Text color="white" fontWeight="600" fontSize={isMobile ? "$3" : "$2"}>
+                            {error}
+                          </Text>
+                        </Card>
+                      )}
+                      {channelPermissionDenied && !isDmMode ? (
+                        <YStack flex={1} justifyContent="center" alignItems="center" padding="$4">
+                          <YStack
+                            backgroundColor="rgba(255, 152, 0, 0.15)"
+                            borderWidth={1}
+                            borderColor="#ff9800"
+                            borderRadius="$4"
+                            padding="$4"
+                            maxWidth={400}
+                            alignItems="center"
+                            gap="$2"
+                          >
+                            <Text color="#ff9800" fontWeight="700" fontSize="$5" textAlign="center">
+                              Permission Denied
+                            </Text>
+                            <Text color="#ffb74d" fontSize="$3" textAlign="center">
+                              You don't have permission to view messages in this channel. Contact a server admin to update your role.
+                            </Text>
+                          </YStack>
+                        </YStack>
+                      ) : (
+                        <FlatList
+                          ref={flatListRef}
+                          data={currentMessages}
+                          renderItem={renderMessage}
+                          keyExtractor={(item) => item.id.toString()}
+                          contentContainerStyle={{
+                            padding: isMobile ? 12 : 16,
+                            paddingBottom: 16
+                          }}
+                          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+                        />
+                      )}
                     </YStack>
-                  ) : (
-                    <FlatList
-                      ref={flatListRef}
-                      data={currentMessages}
-                      renderItem={renderMessage}
-                      keyExtractor={(item) => item.id.toString()}
-                      contentContainerStyle={{
-                        padding: isMobile ? 12 : 16,
-                        paddingBottom: 16
-                      }}
-                      onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+
+                    <TypingIndicator typingUsers={activeTypingUsers} isMobile={isMobile} />
+
+                    <ChatInput
+                      input={input}
+                      onInputChange={handleInputChange}
+                      onSend={handleSend}
+                      onPickFile={handlePickFile}
+                      onCancelAttachment={cancelAttachment}
+                      pendingAttachment={pendingAttachment}
+                      isUploading={isUploading}
+                      canSendMessages={canSendMessages}
+                      channelPermissionDenied={channelPermissionDenied}
+                      isMobile={isMobile}
+                      isDmMode={isDmMode}
+                      selectedServer={selectedServer}
+                      activeConversation={activeConversation}
+                      getConversationDisplayName={getConversationDisplayName}
+                      bottomInset={insets.bottom}
                     />
-                  )}
-                </YStack>
-
-                <TypingIndicator typingUsers={activeTypingUsers} isMobile={isMobile} />
-
-                <ChatInput
-                  input={input}
-                  onInputChange={handleInputChange}
-                  onSend={handleSend}
-                  onPickFile={handlePickFile}
-                  onCancelAttachment={cancelAttachment}
-                  pendingAttachment={pendingAttachment}
-                  isUploading={isUploading}
-                  canSendMessages={canSendMessages}
-                  channelPermissionDenied={channelPermissionDenied}
-                  isMobile={isMobile}
-                  isDmMode={isDmMode}
-                  selectedServer={selectedServer}
-                  activeConversation={activeConversation}
-                  getConversationDisplayName={getConversationDisplayName}
-                  bottomInset={insets.bottom}
-                />
-              </KeyboardAvoidingView>
+                  </KeyboardAvoidingView>
+                )}
+              </XStack>
             </YStack>
           ) : (
             <EmptyState
