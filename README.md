@@ -41,7 +41,8 @@ The application consists of:
 
 ## 📸 Images
 ### Login Page
-<img width="2704" height="1528" alt="image" src="https://github.com/user-attachments/assets/b9f7793a-ee54-4159-801c-4e2a075b9ad3" />
+<img width="2703" height="1523" alt="image" src="https://github.com/user-attachments/assets/d7e4bba7-dd40-4e5a-9246-f0ada1081b06" />
+
 
 ### Server Chat Page
 <img width="2704" height="1532" alt="image" src="https://github.com/user-attachments/assets/2234c0e6-c8fd-472b-a48a-904cd2c719d6" />
