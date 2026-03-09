@@ -27,6 +27,7 @@ The application consists of:
 
 ## 📑 Table of Contents
 
+- [📸 Images](#-images)
 - [🚀 Features](#-features)
 - [🏗️ Architecture Overview](#️-architecture-overview)
 - [📂 Project Structure](#-project-structure)
@@ -38,6 +39,38 @@ The application consists of:
 
 ---
 
+## 📸 Images
+### Login Page
+<img width="2704" height="1528" alt="image" src="https://github.com/user-attachments/assets/b9f7793a-ee54-4159-801c-4e2a075b9ad3" />
+
+### Server Chat Page
+<img width="2704" height="1532" alt="image" src="https://github.com/user-attachments/assets/2234c0e6-c8fd-472b-a48a-904cd2c719d6" />
+
+### Add Friends
+<img width="2701" height="1526" alt="image" src="https://github.com/user-attachments/assets/1d65cf13-1f17-486b-9541-fbd6ef9b0904" />
+
+<img width="601" height="773" alt="image" src="https://github.com/user-attachments/assets/1aa37536-8352-4235-9360-7bb0ec12ffac" />
+
+### Server Settings Page
+<img width="2704" height="1527" alt="image" src="https://github.com/user-attachments/assets/02d40749-42e8-479f-8c09-76136c28ebd9" />
+
+### Voice and Voice Calling
+<img width="2704" height="1524" alt="image" src="https://github.com/user-attachments/assets/82cc6a17-da67-4cd1-bc17-d829efa9662f" />
+
+<img width="445" height="525" alt="image" src="https://github.com/user-attachments/assets/ee261b00-f11f-46b9-b681-66996747b23b" />
+
+Blanked for privacy :)
+<img width="2704" height="1534" alt="image" src="https://github.com/user-attachments/assets/e24eae3c-6373-494d-83f5-534967f131ab" />
+
+
+### Collaborative Document and Whiteboard editing
+<img width="2704" height="1530" alt="image" src="https://github.com/user-attachments/assets/ec62b775-b240-479b-a79a-449082482579" />
+
+<img width="2704" height="1530" alt="image" src="https://github.com/user-attachments/assets/3c328d92-c20f-4416-abca-d7a6719aeac5" />
+
+
+---
+
 ## 🚀 Features
 
 - 🔒 End-to-End Encrypted Messaging (E2EE)
@@ -45,6 +78,7 @@ The application consists of:
 - 👥 Group chats with role-based permissions
 - 📁 Encrypted file and image sharing
 - 📞 Peer-to-peer voice and video calls (WebRTC)
+- 📄 Real-time collaborative document editing
 - 🌐 Cross-platform support (Web + Mobile-ready architecture)
 - 🔑 JWT-based authentication & secure session handling
 - 🏠 Optional self-hosting support
