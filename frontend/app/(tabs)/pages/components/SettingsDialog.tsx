@@ -8,12 +8,14 @@ import AdminPanel from "./AdminPanel";
 import ServerSettings from "./ServerSettings";
 import InviteList from "./InviteList";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { usePreferences } from "../../../../utils/PreferencesContext";
 
 interface Server {
   id: number;
   name: string;
   owner_id?: number;
   icon_url?: string;
+  slow_mode_seconds?: number;
 }
 
 interface SettingsDialogProps {
@@ -39,6 +41,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
   setDidLeaveServer,
   logout,
 }) => {
+  const { fontSizeValue, fontFamily } = usePreferences();
   const serverId = selectedServer?.id ?? 0;
   const serverName = selectedServer?.name;
   const selectedServerOwnerId = selectedServer?.owner_id ?? 0;
@@ -212,12 +215,12 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
       {selectedPage === "Invite" && (
         <YStack gap="$3">
-          <Text fontSize="$6" fontWeight="700" color="white">
+          <Text fontSize="$6" fontWeight="700" color="white" fontFamily={fontFamily}>
             Invite People to Server
           </Text>
 
           <Button
-            backgroundColor="#5865F2"
+            backgroundColor="#0EA5E9"
             onPress={handleGenerateInvite}
             disabled={loading}
           >
@@ -226,19 +229,19 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
           {inviteLink && (
             <YStack marginTop="$2">
-              <Text fontSize="$3" color="#b9bbbe" marginBottom="$4">
+              <Text fontSize="$3" color="#9CA3AF" marginBottom="$4" fontFamily={fontFamily}>
                 Newly generated invite token:
               </Text>
-              <Card backgroundColor="#36393f" padding="$3" borderRadius="$3">
+              <Card backgroundColor="#1E1F2B" padding="$3" borderRadius="$3">
                 <XStack justifyContent="space-between" alignItems="center" gap="$2">
-                  <Text color="white" fontSize="$3" flex={1} selectable>
+                  <Text color="white" fontSize="$3" flex={1} selectable fontFamily={fontFamily}>
                     {inviteLink}
                   </Text>
                   <Button
                     size="$3"
                     backgroundColor="transparent"
                     borderWidth={1}
-                    borderColor="#5865F2"
+                    borderColor="#0EA5E9"
                     onPress={async () => {
                       const copied = await copyToClipboard(inviteLink);
                       if (Platform.OS === "web") {
@@ -259,7 +262,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
           )}
 
           <YStack marginTop="$4">
-            <Text fontSize="$5" fontWeight="600" color="white" marginBottom="$4">
+            <Text fontSize="$5" fontWeight="600" color="white" marginBottom="$4" fontFamily={fontFamily}>
               Existing Invite Links
             </Text>
             <InviteList
@@ -304,6 +307,15 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
             setDidLeaveServer(true);
             onClose();
           }}
+          currentSlowMode={selectedServer?.slow_mode_seconds ?? 0}
+          onSlowModeChanged={(seconds) => {
+            setServers((prev) =>
+              prev.map((s) => (s.id === serverId ? { ...s, slow_mode_seconds: seconds } : s))
+            );
+            if (selectedServer && selectedServer.id === serverId) {
+              setSelectedServer({ ...selectedServer, slow_mode_seconds: seconds });
+            }
+          }}
         />
       )}
     </>
@@ -323,28 +335,28 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
         {/* Header */}
         <XStack
           height={64 + insets.top}
-          backgroundColor="#2f3136"
+          backgroundColor="#171823"
           paddingHorizontal="$4"
           paddingTop={insets.top}
           alignItems="flex-end"
           paddingBottom="$3"
           justifyContent="space-between"
           borderBottomWidth={1}
-          borderBottomColor="#202225"
+          borderBottomColor="#2D2E3F"
         >
-          <Text fontSize={isMobile ? "$5" : "$6"} fontWeight="700" color="white" numberOfLines={1} flex={1}>
+          <Text fontSize={isMobile ? "$5" : "$6"} fontWeight="700" color="white" numberOfLines={1} flex={1} fontFamily={fontFamily}>
             {serverName ? `${serverName} Settings` : "Server Settings"}
           </Text>
           <TouchableOpacity onPress={onClose}>
-            <X size={24} color="#b9bbbe" />
+            <X size={24} color="#9CA3AF" />
           </TouchableOpacity>
         </XStack>
 
         {isMobile ? (
           /* Mobile: Horizontal tab bar + vertical content */
-          <YStack flex={1} backgroundColor="#2f3136">
+          <YStack flex={1} backgroundColor="#171823">
             <XStack
-              backgroundColor="#202225"
+              backgroundColor="#2D2E3F"
               paddingHorizontal="$2"
               paddingVertical="$2"
               gap="$2"
@@ -355,10 +367,10 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                   <YStack
                     paddingHorizontal="$3"
                     paddingVertical="$2"
-                    backgroundColor={selectedPage === page ? "#5865F2" : "#2f3136"}
+                    backgroundColor={selectedPage === page ? "#0EA5E9" : "#171823"}
                     borderRadius="$3"
                   >
-                    <Text color="white" fontSize="$3" numberOfLines={1}>
+                    <Text color="white" fontSize="$3" numberOfLines={1} fontFamily={fontFamily}>
                       {page}
                     </Text>
                   </YStack>
@@ -368,13 +380,13 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 <YStack
                   paddingHorizontal="$3"
                   paddingVertical="$2"
-                  backgroundColor="#2f3136"
+                  backgroundColor="#171823"
                   borderRadius="$3"
                   borderWidth={1}
-                  borderColor="#f04747"
+                  borderColor="#EF4444"
                   opacity={isOwner ? 0.5 : 1}
                 >
-                  <Text color="#f04747" fontSize="$3" numberOfLines={1}>
+                  <Text color="#EF4444" fontSize="$3" numberOfLines={1} fontFamily={fontFamily}>
                     Leave
                   </Text>
                 </YStack>
@@ -387,7 +399,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
             ) : (
               <ScrollView
                 flex={1}
-                backgroundColor="#2f3136"
+                backgroundColor="#171823"
                 padding="$3"
                 contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
               >
@@ -398,18 +410,18 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
         ) : (
           /* Desktop: Sidebar + content */
           <XStack flex={1}>
-            <YStack width={180} backgroundColor="#202225" justifyContent="space-between">
+            <YStack width={180} backgroundColor="#2D2E3F" justifyContent="space-between">
               <YStack>
                 {pages.map((page) => (
                   <TouchableOpacity key={page} onPress={() => setSelectedPage(page)}>
                     <YStack
                       padding="$3"
-                      backgroundColor={selectedPage === page ? "#5865F2" : "transparent"}
+                      backgroundColor={selectedPage === page ? "#0EA5E9" : "transparent"}
                       pressStyle={{
-                        backgroundColor: selectedPage === page ? "#4752c4" : "#40444b",
+                        backgroundColor: selectedPage === page ? "#0284C7" : "#2D2E3F",
                       }}
                     >
-                      <Text color="white" fontSize="$3">
+                      <Text color="white" fontSize="$3" fontFamily={fontFamily}>
                         {page}
                       </Text>
                     </YStack>
@@ -421,7 +433,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 <Button
                   backgroundColor="transparent"
                   borderWidth={1}
-                  borderColor="#f04747"
+                  borderColor="#EF4444"
                   onPress={handleLeave}
                   disabled={isOwner || loading}
                   opacity={isOwner ? 0.5 : 1}
@@ -432,11 +444,11 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
             </YStack>
 
             {isFlexPage ? (
-              <YStack flex={1} backgroundColor="#2f3136">
+              <YStack flex={1} backgroundColor="#171823">
                 {renderFlexContent()}
               </YStack>
             ) : (
-              <ScrollView flex={1} backgroundColor="#2f3136" padding="$4">
+              <ScrollView flex={1} backgroundColor="#171823" padding="$4">
                 {renderScrollableContent()}
               </ScrollView>
             )}
@@ -449,7 +461,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
               position="absolute"
               top={insets.top + 20}
               alignSelf="center"
-              backgroundColor="#323232"
+              backgroundColor="#252636"
               padding={isMobile ? "$4" : "$3"}
               borderRadius="$4"
               marginHorizontal="$4"
@@ -459,7 +471,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
               shadowOpacity={0.3}
               shadowRadius={8}
             >
-          <Text color="white" fontSize="$3">{snackbarMessage}</Text>
+          <Text color="white" fontSize="$3" fontFamily={fontFamily}>{snackbarMessage}</Text>
         </Card>
       )}
     </Modal>

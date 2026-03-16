@@ -1,0 +1,32 @@
+services:
+  backend:
+    build: ./backend
+    container_name: encmsg-backend
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - backend-data:/app/data
+      - backend-static:/app/static
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
+      - DATABASE_URL=sqlite:////app/data/chat.db
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: encmsg-frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    environment:
+      - API_BASE_URL=${API_BASE_URL:-http://localhost:8000}
+      - WS_BASE_URL=${WS_BASE_URL:-ws://localhost:8000}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+  backend-static:

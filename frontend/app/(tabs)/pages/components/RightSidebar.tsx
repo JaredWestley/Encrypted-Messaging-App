@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { YStack, XStack, Text, ScrollView, Spinner, Separator } from "tamagui";
-import { TouchableOpacity, Image } from "react-native";
+import { TouchableOpacity, Image, View } from "react-native";
 import { X } from "@tamagui/lucide-icons";
 import { fetchUsersInServer } from "../../../../utils/api";
 import { BASE_URL } from "../../../../utils/config";
+import StatusIndicator from "./StatusIndicator";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 
 interface User {
   id: number;
@@ -34,6 +36,7 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
   onClose,
   logout,
 }) => {
+  const { fontSizeValue, fontFamily } = usePreferences();
   const serverId = selectedServer.id;
   const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +79,7 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
   };
 
   return (
-    <YStack width={240} backgroundColor="#2f3136" borderLeftWidth={1} borderLeftColor="#202225" height="100%">
+    <YStack width={240} backgroundColor="#171823" borderLeftWidth={1} borderLeftColor="#2D2E3F" height="100%">
       {/* Header */}
       <XStack
         height={64}
@@ -84,14 +87,14 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
         alignItems="center"
         justifyContent="space-between"
         borderBottomWidth={1}
-        borderBottomColor="#202225"
-        backgroundColor="#2f3136"
+        borderBottomColor="#2D2E3F"
+        backgroundColor="#171823"
       >
-        <Text fontSize="$4" color="white" fontWeight="600">
+        <Text fontSize="$4" color="white" fontWeight="600" fontFamily={fontFamily}>
           {error ? "Users (?)" : `Users (${users.length})`}
         </Text>
         <TouchableOpacity onPress={onClose}>
-          <X size={20} color="#b9bbbe" />
+          <X size={20} color="#9CA3AF" />
         </TouchableOpacity>
       </XStack>
 
@@ -102,13 +105,13 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
         </YStack>
       ) : error ? (
         <YStack padding="$3">
-          <Text color="#ff5555" fontSize="$3">
+          <Text color="#EF4444" fontSize="$3" fontFamily={fontFamily}>
             {error}
           </Text>
         </YStack>
       ) : users.length === 0 ? (
         <YStack flex={1} justifyContent="center" alignItems="center">
-          <Text color="#b9bbbe" fontSize="$3">
+          <Text color="#9CA3AF" fontSize="$3" fontFamily={fontFamily}>
             No users found
           </Text>
         </YStack>
@@ -125,33 +128,39 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
                     alignItems="center"
                     gap="$2"
                     pressStyle={{
-                      backgroundColor: "#40444b",
+                      backgroundColor: "#2D2E3F",
                     }}
                   >
-                    {user.icon_url ? (
-                      <Image
-                        source={{ uri: `${BASE_URL}${user.icon_url}` }}
-                        style={{ width: 32, height: 32, borderRadius: 16 }}
-                      />
-                    ) : (
-                      <YStack
-                        width={32}
-                        height={32}
-                        borderRadius={16}
-                        backgroundColor="#757575"
-                        justifyContent="center"
-                        alignItems="center"
-                      >
-                        <Text color="white" fontSize="$2" fontWeight="600">
-                          {getFirstLetter(user.username)}
-                        </Text>
-                      </YStack>
-                    )}
+                    <View style={{ position: "relative" }}>
+                      {user.icon_url ? (
+                        <Image
+                          source={{ uri: `${BASE_URL}${user.icon_url}` }}
+                          style={{ width: 32, height: 32, borderRadius: 16 }}
+                        />
+                      ) : (
+                        <YStack
+                          width={32}
+                          height={32}
+                          borderRadius={16}
+                          backgroundColor="#6B7280"
+                          justifyContent="center"
+                          alignItems="center"
+                        >
+                          <Text color="white" fontSize="$2" fontWeight="600" fontFamily={fontFamily}>
+                            {getFirstLetter(user.username)}
+                          </Text>
+                        </YStack>
+                      )}
+                      <View style={{ position: "absolute", bottom: -2, right: -2 }}>
+                        <StatusIndicator status="online" size={14} />
+                      </View>
+                    </View>
                     <Text
-                      color="#b9bbbe"
+                      color="#9CA3AF"
                       fontSize="$3"
                       flex={1}
                       numberOfLines={1}
+                      fontFamily={fontFamily}
                     >
                       {user.username}
                     </Text>

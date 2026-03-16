@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import { YStack, XStack, Text, Button, Spinner, Separator } from "tamagui";
 import { Modal, TouchableOpacity, Image } from "react-native";
 import { X } from "@tamagui/lucide-icons";
-import { fetchUsersInServer } from "../../../../utils/api";
+import { fetchUsersInServer, fetchCurrentUser } from "../../../../utils/api";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 import { BASE_URL } from "../../../../utils/config";
 
 interface User {
@@ -14,6 +15,7 @@ interface ServerUser {
   id: number;
   username: string;
   icon_url: string | null;
+  bio?: string;
 }
 
 interface Server {
@@ -60,6 +62,7 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
   isDmMode = false,
   activeConversation = null,
 }) => {
+  const { fontFamily } = usePreferences();
   const serverId = selectedServer?.id ?? 0;
   const [detailedUser, setDetailedUser] = useState<ServerUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -129,7 +132,7 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
         <YStack
           width="90%"
           maxWidth={400}
-          backgroundColor="#2f3136"
+          backgroundColor="#171823"
           borderRadius="$4"
           overflow="hidden"
         >
@@ -137,20 +140,20 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
           <XStack
             paddingHorizontal="$4"
             paddingVertical="$3"
-            backgroundColor="#2f3136"
+            backgroundColor="#171823"
             alignItems="center"
             justifyContent="space-between"
           >
-            <Text fontSize="$6" fontWeight="700" color="white">
+            <Text fontSize="$6" fontWeight="700" color="white" fontFamily={fontFamily}>
               User Profile
             </Text>
             <TouchableOpacity onPress={onClose}>
-              <X size={24} color="#b9bbbe" />
+              <X size={24} color="#9CA3AF" />
             </TouchableOpacity>
           </XStack>
 
           {/* Content */}
-          <YStack backgroundColor="#36393f" padding="$4">
+          <YStack backgroundColor="#1E1F2B" padding="$4">
             {loading ? (
               <YStack paddingVertical="$8" alignItems="center">
                 <Spinner color="white" size="large" />
@@ -169,52 +172,52 @@ const UserProfileDialog: React.FC<UserProfileDialogProps> = ({
                       width={80}
                       height={80}
                       borderRadius={40}
-                      backgroundColor="#5865F2"
+                      backgroundColor="#0EA5E9"
                       justifyContent="center"
                       alignItems="center"
                     >
-                      <Text color="white" fontSize="$9" fontWeight="700">
+                      <Text color="white" fontSize="$9" fontWeight="700" fontFamily={fontFamily}>
                         {getFirstLetter(displayUser.username)}
                       </Text>
                     </YStack>
                   )}
                   <YStack flex={1} paddingLeft={8}>
-                    <Text fontSize="$7" fontWeight="700" color="white">
+                    <Text fontSize="$7" fontWeight="700" color="white" fontFamily={fontFamily}>
                       {displayUser.username}
                     </Text>
-                    <Text fontSize="$3" color="#b9bbbe" marginTop="$1">
+                    <Text fontSize="$3" color="#9CA3AF" marginTop="$1" fontFamily={fontFamily}>
                       User ID: {displayUser.id}
                     </Text>
                   </YStack>
                 </XStack>
 
                 {/* Divider */}
-                <Separator borderColor="#202225" marginVertical="$2" />
+                <Separator borderColor="#2D2E3F" marginVertical="$2" />
 
-                {/* About Section */}
+                {/* Bio Section */}
                 <YStack paddingTop={4}>
                   <Text
                     fontSize="$2"
                     fontWeight="700"
-                    color="#b9bbbe"
+                    color="#9CA3AF"
                     textTransform="uppercase"
                     letterSpacing={1}
+                    fontFamily={fontFamily}
                   >
                     About
                   </Text>
-                  <Text fontSize="$3" color="#dcddde" lineHeight={20} paddingTop={4}>
-                    This is a placeholder for more user information, such as bio, roles, or
-                    recent activity.
+                  <Text fontSize="$3" color="#D1D5DB" lineHeight={20} paddingTop={4} fontFamily={fontFamily}>
+                    {displayUser.bio || "No bio set"}
                   </Text>
                 </YStack>
 
                 {/* Close Button */}
                 <Button
-                  backgroundColor="#5865F2"
+                  backgroundColor="#0EA5E9"
                   onPress={onClose}
                   marginTop="$3"
                   pressStyle={{
-                    backgroundColor: "#4752c4",
+                    backgroundColor: "#0284C7",
                   }}
                 >
                   Close

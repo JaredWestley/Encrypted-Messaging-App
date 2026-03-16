@@ -56,7 +56,7 @@ const LoginPage: React.FC = () => {
       >
         <YStack
           flex={1}
-          backgroundColor="#36393f"
+          backgroundColor="#1E1F2B"
           alignItems="center"
           justifyContent="center"
           padding="$4"
@@ -65,7 +65,7 @@ const LoginPage: React.FC = () => {
             size="$4"
             width="100%"
             maxWidth={400}
-            backgroundColor="#2f3136"
+            backgroundColor="#171823"
             padding="$6"
             borderRadius="$6"
             shadowColor="$shadowColor"
@@ -92,7 +92,7 @@ const LoginPage: React.FC = () => {
               {/* Error Alert */}
               {error && (
                 <Card
-                  backgroundColor="#f44336"
+                  backgroundColor="#EF4444"
                   padding="$3"
                   borderRadius="$3"
                   enterStyle={{
@@ -109,18 +109,18 @@ const LoginPage: React.FC = () => {
               {/* Username Input */}
               <YStack marginTop="$4">
                 <XStack
-                  backgroundColor="#202225"
+                  backgroundColor="#2D2E3F"
                   borderRadius="$2"
                   paddingHorizontal="$3"
                   paddingVertical="$2"
                   alignItems="center"
                 >
-                  <User size={20} color="#5865F2" marginRight={"$2"}/>
+                  <User size={20} color="#0EA5E9" marginRight={"$2"}/>
                   <Input
                     flex={1}
                     placeholder="Username"
                     //@ts-ignore
-                    placeholderTextColor="#72767d"
+                    placeholderTextColor="#6B7280"
                     value={username}
                     onChangeText={setUsername}
                     autoCapitalize="none"
@@ -142,18 +142,18 @@ const LoginPage: React.FC = () => {
               {/* Password Input */}
               <YStack marginTop="$2" marginBottom="$4">
                 <XStack
-                  backgroundColor="#202225"
+                  backgroundColor="#2D2E3F"
                   borderRadius="$2"
                   paddingHorizontal="$3"
                   paddingVertical="$2"
                   alignItems="center"
                 >
-                  <Lock size={20} color="#5865F2" marginRight={"$2"}/>
+                  <Lock size={20} color="#0EA5E9" marginRight={"$2"}/>
                   <Input
                     flex={1}
                     placeholder="Password"
                     //@ts-ignore
-                    placeholderTextColor="#72767d"
+                    placeholderTextColor="#6B7280"
                     value={password}
                     onChangeText={setPassword}
                     secureTextEntry={!showPassword}
@@ -173,7 +173,7 @@ const LoginPage: React.FC = () => {
                   <Button
                     backgroundColor={"$color.gray5Dark"}
                     borderWidth={1}
-                    borderColor="#5865F2"
+                    borderColor="#0EA5E9"
                     onPress={togglePasswordVisibility}
                     padding="$2.5"
                     marginLeft={"$2"}
@@ -182,9 +182,9 @@ const LoginPage: React.FC = () => {
                     }}
                   >
                     {showPassword ? (
-                      <EyeOff size={20} color="#5865F2" />
+                      <EyeOff size={20} color="#0EA5E9" />
                     ) : (
-                      <Eye size={20} color="#5865F2" />
+                      <Eye size={20} color="#0EA5E9" />
                     )}
                   </Button>
                 </XStack>
@@ -193,12 +193,12 @@ const LoginPage: React.FC = () => {
               {/* Login Button */}
               <Button
                 size="$5"
-                backgroundColor="#5865F2"
+                backgroundColor="#0EA5E9"
                 onPress={handleLogin}
                 disabled={loading}
                 borderRadius="$3"
                 pressStyle={{
-                  backgroundColor: "#4752c4",
+                  backgroundColor: "#0284C7",
                   scale: 0.98,
                 }}
                 disabledStyle={{
@@ -211,13 +211,13 @@ const LoginPage: React.FC = () => {
 
               {/* Register Link */}
               <XStack justifyContent="center" marginTop="$3">
-                <Text color="#b9bbbe" fontSize="$3">
+                <Text color="#9CA3AF" fontSize="$3">
                   Don't have an account?
                 </Text>
               </XStack>
               <XStack justifyContent="center">
                 <Text
-                  color="#5865F2"
+                  color="#0EA5E9"
                   fontWeight="700"
                   fontSize="$3"
                   onPress={() => router.replace("/pages/Register")}

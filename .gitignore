@@ -5,5 +5,11 @@
 backend/__pycache__/
 backend/app
 backend/venv
+backend/static
 backend/.DS_Store
 backend/venv/
+frontend/package.json
+frontend/eas.json
+frontend/app.json
+docker-compose.override.yml
+frontend/.vscode/

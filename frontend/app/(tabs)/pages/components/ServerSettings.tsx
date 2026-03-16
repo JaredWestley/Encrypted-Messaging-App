@@ -2,8 +2,9 @@ import React, { useState } from "react";
 import { YStack, XStack, Text, Input, Button, Separator } from "tamagui";
 import { Alert as RNAlert, Image, Platform } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { renameServer, deleteServer, uploadServerIcon } from "../../../../utils/api";
+import { renameServer, deleteServer, uploadServerIcon, updateServerSettings } from "../../../../utils/api";
 import { BASE_URL } from "../../../../utils/config";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 
 interface ServerSettingsProps {
   serverId: number;
@@ -12,9 +13,11 @@ interface ServerSettingsProps {
   currentIcon?: string;
   currentName: string;
   isOwner: boolean;
+  currentSlowMode?: number;
   onServerDeleted: () => void;
   onServerRenamed: (newName: string) => void;
   onServerIconUpdated: (newIconUrl: string) => void;
+  onSlowModeChanged?: (seconds: number) => void;
 }
 
 const ServerSettings: React.FC<ServerSettingsProps> = ({
@@ -27,9 +30,13 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
   onServerDeleted,
   onServerRenamed,
   onServerIconUpdated,
+  currentSlowMode = 0,
+  onSlowModeChanged,
 }) => {
+  const { fontSizeValue, fontFamily } = usePreferences();
   const [newName, setNewName] = useState(currentName);
   const [loading, setLoading] = useState(false);
+  const [slowMode, setSlowMode] = useState(currentSlowMode);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
   const [previewUri, setPreviewUri] = useState<string | null>(null);
@@ -164,26 +171,27 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
 
   return (
     <YStack>
-      <Text fontSize="$6" fontWeight="700" color="white">
+      <Text fontSize="$6" fontWeight="700" color="white" fontFamily={fontFamily}>
         Edit Server
       </Text>
 
       {/* Server Name */}
       <YStack marginTop="$2">
-        <Text color="#b9bbbe" fontSize="$3">
+        <Text color="#9CA3AF" fontSize="$3" fontFamily={fontFamily}>
           Server Name
         </Text>
         <Input
           value={newName}
           onChangeText={setNewName}
           disabled={!isOwner || loading}
-          backgroundColor="#202225"
+          backgroundColor="#2D2E3F"
           borderWidth={0}
           color="white"
           marginTop="$2"
+          fontFamily={fontFamily}
         />
         <Button
-          backgroundColor="#5865F2"
+          backgroundColor="#0EA5E9"
           onPress={handleRename}
           disabled={loading || !newName.trim() || newName === currentName || !isOwner}
           marginTop="$2"
@@ -197,7 +205,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
 
       {/* Server Icon */}
       <YStack>
-        <Text color="#b9bbbe" fontSize="$3" marginBottom="$2">
+        <Text color="#9CA3AF" fontSize="$3" marginBottom="$2" fontFamily={fontFamily}>
           Server Icon
         </Text>
         
@@ -221,12 +229,12 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
             width={80}
             height={80}
             borderRadius={40}
-            backgroundColor="#757575"
+            backgroundColor="#6B7280"
             justifyContent="center"
             alignItems="center"
             marginBottom={8}
           >
-            <Text fontSize="$9" fontWeight="700" color="white">
+            <Text fontSize="$9" fontWeight="700" color="white" fontFamily={fontFamily}>
               {getFirstLetter(currentName)}
             </Text>
           </YStack>
@@ -237,7 +245,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
             flex={1}
             backgroundColor="transparent"
             borderWidth={1}
-            borderColor="#5865F2"
+            borderColor="#0EA5E9"
             onPress={pickImage}
             disabled={!isOwner || loading}
           >
@@ -245,7 +253,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
           </Button>
           <Button
             flex={1}
-            backgroundColor="#5865F2"
+            backgroundColor="#0EA5E9"
             onPress={handleIconUpload}
             disabled={!previewUri || loading}
           >
@@ -254,21 +262,67 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
         </XStack>
       </YStack>
 
+      {/* Slow Mode */}
+      {isOwner && (
+        <>
+          <Separator borderColor="#444" marginVertical="$2" />
+          <YStack>
+            <Text color="#9CA3AF" fontSize="$3" marginBottom="$2" fontFamily={fontFamily}>
+              Slow Mode
+            </Text>
+            <Text color="#6B7280" fontSize="$2" marginBottom="$2" fontFamily={fontFamily}>
+              Limit how often members can send messages.
+            </Text>
+            <XStack flexWrap="wrap" gap="$2">
+              {[
+                { label: "Off", value: 0 },
+                { label: "5s", value: 5 },
+                { label: "10s", value: 10 },
+                { label: "30s", value: 30 },
+                { label: "1m", value: 60 },
+              ].map((opt) => (
+                <Button
+                  key={opt.value}
+                  size="$3"
+                  backgroundColor={slowMode === opt.value ? "#0EA5E9" : "#2D2E3F"}
+                  borderWidth={slowMode === opt.value ? 0 : 1}
+                  borderColor="#4f545c"
+                  onPress={async () => {
+                    try {
+                      await updateServerSettings(token, serverId, { slow_mode_seconds: opt.value }, logout);
+                      setSlowMode(opt.value);
+                      onSlowModeChanged?.(opt.value);
+                      showToast(`Slow mode ${opt.value === 0 ? "disabled" : "set to " + opt.label}`);
+                    } catch (err: any) {
+                      showToast("Failed to update slow mode");
+                    }
+                  }}
+                  disabled={loading}
+                  pressStyle={{ backgroundColor: slowMode === opt.value ? "#0284C7" : "#4f545c" }}
+                >
+                  <Text color="white" fontSize={12} fontWeight="600" fontFamily={fontFamily}>{opt.label}</Text>
+                </Button>
+              ))}
+            </XStack>
+          </YStack>
+        </>
+      )}
+
       {/* Danger Zone */}
       {isOwner && (
         <>
           <Separator borderColor="#444" marginVertical="$4" />
           <YStack>
-            <Text fontSize="$5" fontWeight="700" color="#f04747">
+            <Text fontSize="$5" fontWeight="700" color="#EF4444" fontFamily={fontFamily}>
               Danger Zone
             </Text>
-            <Text color="#b9bbbe" fontSize="$3" marginTop="$2">
+            <Text color="#9CA3AF" fontSize="$3" marginTop="$2" fontFamily={fontFamily}>
               Deleting a server is permanent and cannot be undone.
             </Text>
             <Button
               backgroundColor="transparent"
               borderWidth={1}
-              borderColor="#f04747"
+              borderColor="#EF4444"
               onPress={handleDelete}
               disabled={loading}
               marginTop="$2"
@@ -285,7 +339,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
           position="absolute"
           bottom={20}
           alignSelf="center"
-          backgroundColor="#323232"
+          backgroundColor="#252636"
           padding="$3"
           borderRadius="$3"
           enterStyle={{
@@ -293,7 +347,7 @@ const ServerSettings: React.FC<ServerSettingsProps> = ({
             y: 20,
           }}
         >
-          <Text color="white">{snackbarMessage}</Text>
+          <Text color="white" fontFamily={fontFamily}>{snackbarMessage}</Text>
         </YStack>
       )}
     </YStack>

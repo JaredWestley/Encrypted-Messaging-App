@@ -3,6 +3,7 @@ import { Platform, StyleSheet } from "react-native";
 import { YStack, XStack, Text, Button } from "tamagui";
 import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, Minimize2 } from "@tamagui/lucide-icons";
 import type { CallState, AudioDevice } from "../../../../utils/useWebRTC";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 import AudioSettingsPanel from "./AudioSettingsPanel";
 
 // Conditionally import RTCView for native
@@ -46,6 +47,7 @@ function MinimizedCallBar({
   onToggleMute: () => void;
   onToggleMinimize: () => void;
 }) {
+  const { fontFamily } = usePreferences();
   const minimizedAudioRef = useRef<HTMLAudioElement>(null);
 
   // For voice calls in minimized mode, need audio playback on web
@@ -62,7 +64,7 @@ function MinimizedCallBar({
       <audio ref={minimizedAudioRef as any} autoPlay playsInline style={{ display: "none" } as any} />
     )}
     <XStack
-      backgroundColor="#43B581"
+      backgroundColor="#10B981"
       paddingHorizontal="$3"
       paddingVertical="$2"
       alignItems="center"
@@ -72,10 +74,10 @@ function MinimizedCallBar({
     >
       <XStack alignItems="center" gap="$2" flex={1}>
         <Phone size={16} color="white" />
-        <Text color="white" fontSize={14} fontWeight="600">
+        <Text color="white" fontSize={14} fontWeight="600" fontFamily={fontFamily}>
           {callState.remoteUsername || "Call"}
         </Text>
-        <Text color="rgba(255,255,255,0.8)" fontSize={13}>
+        <Text color="rgba(255,255,255,0.8)" fontSize={13} fontFamily={fontFamily}>
           {formatDuration(callState.callDuration)}
         </Text>
       </XStack>
@@ -83,14 +85,14 @@ function MinimizedCallBar({
         <Button
           size="$2"
           circular
-          backgroundColor={callState.isMuted ? "#ED4245" : "rgba(255,255,255,0.2)"}
+          backgroundColor={callState.isMuted ? "#EF4444" : "rgba(255,255,255,0.2)"}
           onPress={(e: any) => { e.stopPropagation?.(); onToggleMute(); }}
           icon={callState.isMuted ? <MicOff size={14} color="white" /> : <Mic size={14} color="white" />}
         />
         <Button
           size="$2"
           circular
-          backgroundColor="#ED4245"
+          backgroundColor="#EF4444"
           onPress={(e: any) => { e.stopPropagation?.(); onHangUp(); }}
           icon={<PhoneOff size={14} color="white" />}
         />
@@ -114,6 +116,7 @@ function VideoCallView({
   onSelectSpeaker,
   onRefreshDevices,
 }: ActiveCallOverlayProps) {
+  const { fontFamily } = usePreferences();
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -157,7 +160,7 @@ function VideoCallView({
           />
         ) : (
           <YStack flex={1} justifyContent="center" alignItems="center">
-            <Text color="#b9bbbe" fontSize={16}>Connecting video...</Text>
+            <Text color="#9CA3AF" fontSize={16} fontFamily={fontFamily}>Connecting video...</Text>
           </YStack>
         )
       )}
@@ -207,10 +210,10 @@ function VideoCallView({
         alignItems="center"
       >
         <YStack>
-          <Text color="white" fontSize={18} fontWeight="700">
+          <Text color="white" fontSize={18} fontWeight="700" fontFamily={fontFamily}>
             {callState.remoteUsername || "Call"}
           </Text>
-          <Text color="rgba(255,255,255,0.7)" fontSize={14}>
+          <Text color="rgba(255,255,255,0.7)" fontSize={14} fontFamily={fontFamily}>
             {formatDuration(callState.callDuration)}
           </Text>
         </YStack>
@@ -236,11 +239,11 @@ function VideoCallView({
           <Button
             size="$5"
             circular
-            backgroundColor={callState.isMuted ? "#ED4245" : "rgba(255,255,255,0.2)"}
+            backgroundColor={callState.isMuted ? "#EF4444" : "rgba(255,255,255,0.2)"}
             onPress={onToggleMute}
             icon={callState.isMuted ? <MicOff size={24} color="white" /> : <Mic size={24} color="white" />}
           />
-          <Text color="rgba(255,255,255,0.7)" fontSize={11}>
+          <Text color="rgba(255,255,255,0.7)" fontSize={11} fontFamily={fontFamily}>
             {callState.isMuted ? "Unmute" : "Mute"}
           </Text>
         </YStack>
@@ -249,11 +252,11 @@ function VideoCallView({
           <Button
             size="$5"
             circular
-            backgroundColor={!callState.isVideoEnabled ? "#ED4245" : "rgba(255,255,255,0.2)"}
+            backgroundColor={!callState.isVideoEnabled ? "#EF4444" : "rgba(255,255,255,0.2)"}
             onPress={onToggleVideo}
             icon={callState.isVideoEnabled ? <Video size={24} color="white" /> : <VideoOff size={24} color="white" />}
           />
-          <Text color="rgba(255,255,255,0.7)" fontSize={11}>
+          <Text color="rgba(255,255,255,0.7)" fontSize={11} fontFamily={fontFamily}>
             {callState.isVideoEnabled ? "Stop Video" : "Start Video"}
           </Text>
         </YStack>
@@ -269,7 +272,7 @@ function VideoCallView({
               onSelectSpeaker={onSelectSpeaker}
               onRefreshDevices={onRefreshDevices}
             />
-            <Text color="rgba(255,255,255,0.7)" fontSize={11}>
+            <Text color="rgba(255,255,255,0.7)" fontSize={11} fontFamily={fontFamily}>
               Audio
             </Text>
           </YStack>
@@ -279,12 +282,12 @@ function VideoCallView({
           <Button
             size="$5"
             circular
-            backgroundColor="#ED4245"
+            backgroundColor="#EF4444"
             pressStyle={{ backgroundColor: "#c0392b" }}
             onPress={onHangUp}
             icon={<PhoneOff size={24} color="white" />}
           />
-          <Text color="rgba(255,255,255,0.7)" fontSize={11}>
+          <Text color="rgba(255,255,255,0.7)" fontSize={11} fontFamily={fontFamily}>
             End
           </Text>
         </YStack>
@@ -306,6 +309,7 @@ function VoiceCallView({
   onSelectSpeaker,
   onRefreshDevices,
 }: Omit<ActiveCallOverlayProps, "onToggleVideo">) {
+  const { fontFamily } = usePreferences();
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
 
   // Web: attach remote stream to a hidden <audio> element so we can hear them
@@ -332,7 +336,7 @@ function VoiceCallView({
       left={0}
       right={0}
       bottom={0}
-      backgroundColor="#2f3136"
+      backgroundColor="#171823"
       zIndex={1000}
       justifyContent="center"
       alignItems="center"
@@ -359,20 +363,20 @@ function VoiceCallView({
         width={100}
         height={100}
         borderRadius={50}
-        backgroundColor="#5865F2"
+        backgroundColor="#0EA5E9"
         justifyContent="center"
         alignItems="center"
         marginBottom="$4"
       >
-        <Text color="white" fontSize={36} fontWeight="700">
+        <Text color="white" fontSize={36} fontWeight="700" fontFamily={fontFamily}>
           {(callState.remoteUsername || "?")[0].toUpperCase()}
         </Text>
       </YStack>
 
-      <Text color="white" fontSize={22} fontWeight="700" marginBottom="$2">
+      <Text color="white" fontSize={22} fontWeight="700" marginBottom="$2" fontFamily={fontFamily}>
         {callState.remoteUsername || "Call"}
       </Text>
-      <Text color="#b9bbbe" fontSize={16} marginBottom="$10">
+      <Text color="#9CA3AF" fontSize={16} marginBottom="$10" fontFamily={fontFamily}>
         {formatDuration(callState.callDuration)}
       </Text>
 
@@ -382,11 +386,11 @@ function VoiceCallView({
           <Button
             size="$5"
             circular
-            backgroundColor={callState.isMuted ? "#ED4245" : "rgba(255,255,255,0.15)"}
+            backgroundColor={callState.isMuted ? "#EF4444" : "rgba(255,255,255,0.15)"}
             onPress={onToggleMute}
             icon={callState.isMuted ? <MicOff size={24} color="white" /> : <Mic size={24} color="white" />}
           />
-          <Text color="rgba(255,255,255,0.7)" fontSize={11}>
+          <Text color="rgba(255,255,255,0.7)" fontSize={11} fontFamily={fontFamily}>
             {callState.isMuted ? "Unmute" : "Mute"}
           </Text>
         </YStack>
@@ -402,7 +406,7 @@ function VoiceCallView({
               onSelectSpeaker={onSelectSpeaker}
               onRefreshDevices={onRefreshDevices}
             />
-            <Text color="rgba(255,255,255,0.7)" fontSize={11}>
+            <Text color="rgba(255,255,255,0.7)" fontSize={11} fontFamily={fontFamily}>
               Audio
             </Text>
           </YStack>
@@ -412,12 +416,12 @@ function VoiceCallView({
           <Button
             size="$5"
             circular
-            backgroundColor="#ED4245"
+            backgroundColor="#EF4444"
             pressStyle={{ backgroundColor: "#c0392b" }}
             onPress={onHangUp}
             icon={<PhoneOff size={24} color="white" />}
           />
-          <Text color="rgba(255,255,255,0.7)" fontSize={11}>
+          <Text color="rgba(255,255,255,0.7)" fontSize={11} fontFamily={fontFamily}>
             End
           </Text>
         </YStack>

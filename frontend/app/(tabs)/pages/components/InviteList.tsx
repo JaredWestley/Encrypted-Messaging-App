@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { YStack, XStack, Text, Button, Spinner, ScrollView, Card } from "tamagui";
 import { Alert as RNAlert, Platform, useWindowDimensions } from "react-native";
 import { getServerInvites, deleteInvite } from "../../../../utils/api";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 
@@ -18,6 +19,7 @@ const InviteList: React.FC<InviteListProps> = ({
   logout,
   refreshTrigger,
 }) => {
+  const { fontFamily } = usePreferences();
   const [invites, setInvites] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -134,7 +136,7 @@ const InviteList: React.FC<InviteListProps> = ({
   if (invites.length === 0) {
     return (
       <YStack paddingVertical="$4">
-        <Text color="#b9bbbe" fontSize="$3" textAlign="center">
+        <Text color="#9CA3AF" fontSize="$3" textAlign="center" fontFamily={fontFamily}>
           No invite links yet. Generate one above!
         </Text>
       </YStack>
@@ -149,16 +151,16 @@ const InviteList: React.FC<InviteListProps> = ({
           <XStack
             key={invite.token}
             padding="$3"
-            backgroundColor="#36393f"
+            backgroundColor="#1E1F2B"
             borderRadius="$3"
             justifyContent="space-between"
             alignItems="center"
           >
             <YStack flex={1} marginRight="$2">
-              <Text color="white" fontSize="$3" numberOfLines={1} selectable>
+              <Text color="white" fontSize="$3" numberOfLines={1} selectable fontFamily={fontFamily}>
                 {invite.token}
               </Text>
-              <Text color="#b9bbbe" fontSize="$2" marginTop="$1">
+              <Text color="#9CA3AF" fontSize="$2" marginTop="$1" fontFamily={fontFamily}>
                 Created: {new Date(invite.created_at).toLocaleDateString()}
               </Text>
             </YStack>
@@ -166,7 +168,7 @@ const InviteList: React.FC<InviteListProps> = ({
               size="$3"
               backgroundColor="transparent"
               borderWidth={1}
-              borderColor="#5865F2"
+              borderColor="#0EA5E9"
               onPress={async () => {
                 const copied = await copyToClipboard(invite.token);
                 if (Platform.OS === "web") {
@@ -183,7 +185,7 @@ const InviteList: React.FC<InviteListProps> = ({
             </Button>
             <Button
               size="$3"
-              backgroundColor="#f04747"
+              backgroundColor="#EF4444"
               disabled={saving}
               marginLeft="$2"
               onPress={() => handleDelete(invite.token)}
@@ -198,7 +200,7 @@ const InviteList: React.FC<InviteListProps> = ({
         <Card
               position="absolute"
               alignSelf="center"
-              backgroundColor="#323232"
+              backgroundColor="#252636"
               padding={isMobile ? "$4" : "$3"}
               borderRadius="$4"
               marginHorizontal="$4"
@@ -208,7 +210,7 @@ const InviteList: React.FC<InviteListProps> = ({
               shadowOpacity={0.3}
               shadowRadius={8}
             >
-          <Text color="white" fontSize="$3">{snackbarMessage}</Text>
+          <Text color="white" fontSize="$3" fontFamily={fontFamily}>{snackbarMessage}</Text>
         </Card>
       )}
     </ScrollView>

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Platform, Pressable, Modal } from "react-native";
 import { YStack, XStack, Text, Separator, Button } from "tamagui";
 import { Settings, Mic, Volume2, Check, X } from "@tamagui/lucide-icons";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 import type { AudioDevice } from "../../../../utils/useWebRTC";
 
 interface AudioSettingsPanelProps {
@@ -21,6 +22,7 @@ export default function AudioSettingsPanel({
   onSelectSpeaker,
   onRefreshDevices,
 }: AudioSettingsPanelProps) {
+  const { fontFamily } = usePreferences();
   const [visible, setVisible] = useState(false);
 
   const microphones = audioDevices.filter((d) => d.kind === "audioinput");
@@ -65,7 +67,7 @@ export default function AudioSettingsPanel({
         >
           <Pressable
             style={{
-              backgroundColor: "#2f3136",
+              backgroundColor: "#171823",
               borderRadius: 12,
               padding: 20,
               minWidth: 320,
@@ -76,13 +78,13 @@ export default function AudioSettingsPanel({
               shadowRadius: 16,
               elevation: 12,
               borderWidth: 1,
-              borderColor: "#40444b",
+              borderColor: "#2D2E3F",
             }}
             onPress={(e) => e.stopPropagation?.()}
           >
             {/* Header */}
             <XStack justifyContent="space-between" alignItems="center" marginBottom={16}>
-              <Text color="white" fontSize={16} fontWeight="700">
+              <Text color="white" fontSize={16} fontWeight="700" fontFamily={fontFamily}>
                 Audio Settings
               </Text>
               <Pressable
@@ -96,20 +98,20 @@ export default function AudioSettingsPanel({
                   alignItems: "center",
                 }}
               >
-                <X size={14} color="#b9bbbe" />
+                <X size={14} color="#9CA3AF" />
               </Pressable>
             </XStack>
 
             {/* Microphone section */}
             <XStack alignItems="center" gap={8} marginBottom={8}>
-              <Mic size={14} color="#b9bbbe" />
-              <Text color="#b9bbbe" fontSize={12} fontWeight="600" textTransform="uppercase">
+              <Mic size={14} color="#9CA3AF" />
+              <Text color="#9CA3AF" fontSize={12} fontWeight="600" textTransform="uppercase" fontFamily={fontFamily}>
                 Microphone
               </Text>
             </XStack>
             <YStack gap={4} marginBottom={16}>
               {microphones.length === 0 ? (
-                <Text color="#72767d" fontSize={13}>No microphones found</Text>
+                <Text color="#6B7280" fontSize={13} fontFamily={fontFamily}>No microphones found</Text>
               ) : (
                 microphones.map((device) => {
                   const isSelected = device.deviceId === selectedMicId ||
@@ -127,36 +129,37 @@ export default function AudioSettingsPanel({
                         alignItems: "center",
                         justifyContent: "space-between",
                         borderWidth: isSelected ? 1 : 0,
-                        borderColor: isSelected ? "#5865F2" : "transparent",
+                        borderColor: isSelected ? "#0EA5E9" : "transparent",
                       }}
                     >
                       <Text
-                        color={isSelected ? "white" : "#dcddde"}
+                        color={isSelected ? "white" : "#D1D5DB"}
                         fontSize={13}
                         numberOfLines={1}
                         style={{ flex: 1 }}
+                        fontFamily={fontFamily}
                       >
                         {device.label}
                       </Text>
-                      {isSelected && <Check size={14} color="#5865F2" />}
+                      {isSelected && <Check size={14} color="#0EA5E9" />}
                     </Pressable>
                   );
                 })
               )}
             </YStack>
 
-            <Separator backgroundColor="#40444b" marginBottom={16} />
+            <Separator backgroundColor="#2D2E3F" marginBottom={16} />
 
             {/* Speaker section */}
             <XStack alignItems="center" gap={8} marginBottom={8}>
-              <Volume2 size={14} color="#b9bbbe" />
-              <Text color="#b9bbbe" fontSize={12} fontWeight="600" textTransform="uppercase">
+              <Volume2 size={14} color="#9CA3AF" />
+              <Text color="#9CA3AF" fontSize={12} fontWeight="600" textTransform="uppercase" fontFamily={fontFamily}>
                 Speaker
               </Text>
             </XStack>
             <YStack gap={4}>
               {speakers.length === 0 ? (
-                <Text color="#72767d" fontSize={13}>
+                <Text color="#6B7280" fontSize={13} fontFamily={fontFamily}>
                   Speaker selection not available
                 </Text>
               ) : (
@@ -176,18 +179,19 @@ export default function AudioSettingsPanel({
                         alignItems: "center",
                         justifyContent: "space-between",
                         borderWidth: isSelected ? 1 : 0,
-                        borderColor: isSelected ? "#5865F2" : "transparent",
+                        borderColor: isSelected ? "#0EA5E9" : "transparent",
                       }}
                     >
                       <Text
-                        color={isSelected ? "white" : "#dcddde"}
+                        color={isSelected ? "white" : "#D1D5DB"}
                         fontSize={13}
                         numberOfLines={1}
                         style={{ flex: 1 }}
+                        fontFamily={fontFamily}
                       >
                         {device.label}
                       </Text>
-                      {isSelected && <Check size={14} color="#5865F2" />}
+                      {isSelected && <Check size={14} color="#0EA5E9" />}
                     </Pressable>
                   );
                 })
@@ -195,7 +199,7 @@ export default function AudioSettingsPanel({
             </YStack>
 
             {/* Info text */}
-            <Text color="#72767d" fontSize={11} marginTop={12}>
+            <Text color="#6B7280" fontSize={11} marginTop={12} fontFamily={fontFamily}>
               Speaker selection applies to audio/video elements via setSinkId.
               {"\n"}Microphone changes take effect immediately during the call.
             </Text>

@@ -13,6 +13,7 @@ import {
   Modal,
   useWindowDimensions,
   Image,
+  View,
 } from "react-native";
 import {
   UserPlus,
@@ -38,6 +39,8 @@ import {
 } from "../../../../utils/api";
 import { useAuth } from "../../../../utils/AuthContext";
 import { BASE_URL } from "../../../../utils/config";
+import { usePreferences } from "../../../../utils/PreferencesContext";
+import StatusIndicator from "./StatusIndicator";
 
 interface FriendsListProps {
   open: boolean;
@@ -55,6 +58,7 @@ const FriendsList: React.FC<FriendsListProps> = ({
   refreshTrigger = 0,
 }) => {
   const { token, logout } = useAuth();
+  const { fontFamily } = usePreferences();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const isMobile = width < 600;
@@ -189,27 +193,33 @@ const FriendsList: React.FC<FriendsListProps> = ({
   };
 
   const renderAvatar = (user: { icon_url?: string | null; username: string }, size: number = 40) => {
-    if (user.icon_url) {
-      return (
-        <Image
-          source={{ uri: `${baseUrl}${user.icon_url}` }}
-          style={{ width: size, height: size, borderRadius: size / 2 }}
-        />
-      );
-    }
-    return (
+    const avatar = user.icon_url ? (
+      <Image
+        source={{ uri: `${baseUrl}${user.icon_url}` }}
+        style={{ width: size, height: size, borderRadius: size / 2 }}
+      />
+    ) : (
       <YStack
         width={size}
         height={size}
         borderRadius={size / 2}
-        backgroundColor="#5865F2"
+        backgroundColor="#0EA5E9"
         justifyContent="center"
         alignItems="center"
       >
-        <Text color="white" fontSize={size > 36 ? "$4" : "$3"} fontWeight="700">
+        <Text color="white" fontSize={size > 36 ? "$4" : "$3"} fontWeight="700" fontFamily={fontFamily}>
           {getFirstLetter(user.username)}
         </Text>
       </YStack>
+    );
+
+    return (
+      <View style={{ position: "relative" }}>
+        {avatar}
+        <View style={{ position: "absolute", bottom: -2, right: -2 }}>
+          <StatusIndicator status="online" size={14} />
+        </View>
+      </View>
     );
   };
 
@@ -223,12 +233,12 @@ const FriendsList: React.FC<FriendsListProps> = ({
         padding="$3"
         alignItems="center"
         gap="$3"
-        backgroundColor="#2f3136"
+        backgroundColor="#171823"
         borderRadius="$3"
       >
         {renderAvatar(friend)}
         <YStack flex={1}>
-          <Text color="white" fontSize="$4" fontWeight="600">
+          <Text color="white" fontSize="$4" fontWeight="600" fontFamily={fontFamily}>
             {friend.username}
           </Text>
         </YStack>
@@ -236,7 +246,7 @@ const FriendsList: React.FC<FriendsListProps> = ({
           <TouchableOpacity onPress={() => handleStartConversation(friend.id)}>
             <YStack
               padding="$2"
-              backgroundColor="#5865F2"
+              backgroundColor="#0EA5E9"
               borderRadius="$2"
             >
               <MessageCircle size={18} color="white" />
@@ -245,10 +255,10 @@ const FriendsList: React.FC<FriendsListProps> = ({
           <TouchableOpacity onPress={() => handleRemoveFriend(friend.id)}>
             <YStack
               padding="$2"
-              backgroundColor="#40444b"
+              backgroundColor="#2D2E3F"
               borderRadius="$2"
             >
-              <Trash2 size={18} color="#f04747" />
+              <Trash2 size={18} color="#EF4444" />
             </YStack>
           </TouchableOpacity>
         </XStack>
@@ -266,15 +276,15 @@ const FriendsList: React.FC<FriendsListProps> = ({
         padding="$3"
         alignItems="center"
         gap="$3"
-        backgroundColor="#2f3136"
+        backgroundColor="#171823"
         borderRadius="$3"
       >
         {renderAvatar(sender)}
         <YStack flex={1}>
-          <Text color="white" fontSize="$4" fontWeight="600">
+          <Text color="white" fontSize="$4" fontWeight="600" fontFamily={fontFamily}>
             {sender.username}
           </Text>
-          <Text color="#72767d" fontSize="$2">
+          <Text color="#6B7280" fontSize="$2" fontFamily={fontFamily}>
             Incoming request
           </Text>
         </YStack>
@@ -282,7 +292,7 @@ const FriendsList: React.FC<FriendsListProps> = ({
           <TouchableOpacity onPress={() => handleAccept(friendship.id)}>
             <YStack
               padding="$2"
-              backgroundColor="#43b581"
+              backgroundColor="#10B981"
               borderRadius="$2"
             >
               <Check size={18} color="white" />
@@ -291,7 +301,7 @@ const FriendsList: React.FC<FriendsListProps> = ({
           <TouchableOpacity onPress={() => handleReject(friendship.id)}>
             <YStack
               padding="$2"
-              backgroundColor="#f04747"
+              backgroundColor="#EF4444"
               borderRadius="$2"
             >
               <X size={18} color="white" />
@@ -312,19 +322,19 @@ const FriendsList: React.FC<FriendsListProps> = ({
         padding="$3"
         alignItems="center"
         gap="$3"
-        backgroundColor="#2f3136"
+        backgroundColor="#171823"
         borderRadius="$3"
       >
         {renderAvatar(target)}
         <YStack flex={1}>
-          <Text color="white" fontSize="$4" fontWeight="600">
+          <Text color="white" fontSize="$4" fontWeight="600" fontFamily={fontFamily}>
             {target.username}
           </Text>
-          <Text color="#72767d" fontSize="$2">
+          <Text color="#6B7280" fontSize="$2" fontFamily={fontFamily}>
             Pending...
           </Text>
         </YStack>
-        <Clock size={18} color="#72767d" />
+        <Clock size={18} color="#6B7280" />
       </XStack>
     );
   };
@@ -354,7 +364,7 @@ const FriendsList: React.FC<FriendsListProps> = ({
           maxWidth={550}
           height={isMobile ? "90%" : "80%"}
           maxHeight={700}
-          backgroundColor="#36393f"
+          backgroundColor="#1E1F2B"
           borderRadius="$4"
           overflow="hidden"
         >
@@ -363,24 +373,24 @@ const FriendsList: React.FC<FriendsListProps> = ({
             padding="$4"
             alignItems="center"
             justifyContent="space-between"
-            backgroundColor="#2f3136"
+            backgroundColor="#171823"
             borderBottomWidth={1}
-            borderBottomColor="#202225"
+            borderBottomColor="#2D2E3F"
           >
             <XStack alignItems="center" gap="$2">
-              <Users size={22} color="#5865F2" />
-              <Text fontSize="$6" fontWeight="700" color="white">
+              <Users size={22} color="#0EA5E9" />
+              <Text fontSize="$6" fontWeight="700" color="white" fontFamily={fontFamily}>
                 Friends
               </Text>
             </XStack>
             <TouchableOpacity onPress={onClose}>
-              <X size={24} color="#b9bbbe" />
+              <X size={24} color="#9CA3AF" />
             </TouchableOpacity>
           </XStack>
 
           {/* Add Friend Section */}
-          <YStack padding="$3" gap="$2" borderBottomWidth={1} borderBottomColor="#202225">
-            <Text fontSize="$3" fontWeight="600" color="#b9bbbe">
+          <YStack padding="$3" gap="$2" borderBottomWidth={1} borderBottomColor="#2D2E3F">
+            <Text fontSize="$3" fontWeight="600" color="#9CA3AF" fontFamily={fontFamily}>
               Add Friend
             </Text>
             <XStack gap="$2" alignItems="center">
@@ -389,7 +399,7 @@ const FriendsList: React.FC<FriendsListProps> = ({
                 placeholder="Enter username"
                 value={addFriendUsername}
                 onChangeText={setAddFriendUsername}
-                backgroundColor="#40444b"
+                backgroundColor="#2D2E3F"
                 borderWidth={0}
                 color="white"
                 fontSize="$3"
@@ -397,14 +407,15 @@ const FriendsList: React.FC<FriendsListProps> = ({
                 autoCapitalize="none"
                 autoCorrect={false}
                 onSubmitEditing={handleSendRequest}
+                fontFamily={fontFamily}
               />
               <Button
                 size="$3"
-                backgroundColor="#5865F2"
+                backgroundColor="#0EA5E9"
                 onPress={handleSendRequest}
                 disabled={!addFriendUsername.trim()}
                 disabledStyle={{ opacity: 0.5 }}
-                pressStyle={{ backgroundColor: "#4752C4" }}
+                pressStyle={{ backgroundColor: "#0284C7" }}
                 icon={<Send size={16} color="white" />}
               >
                 Send
@@ -414,9 +425,9 @@ const FriendsList: React.FC<FriendsListProps> = ({
 
           {/* Tabs */}
           <XStack
-            backgroundColor="#2f3136"
+            backgroundColor="#171823"
             borderBottomWidth={1}
-            borderBottomColor="#202225"
+            borderBottomColor="#2D2E3F"
           >
             {tabData.map((tab) => (
               <TouchableOpacity
@@ -428,26 +439,27 @@ const FriendsList: React.FC<FriendsListProps> = ({
                   padding="$3"
                   alignItems="center"
                   borderBottomWidth={2}
-                  borderBottomColor={activeTab === tab.key ? "#5865F2" : "transparent"}
+                  borderBottomColor={activeTab === tab.key ? "#0EA5E9" : "transparent"}
                 >
                   <XStack gap="$1" alignItems="center">
                     <Text
-                      color={activeTab === tab.key ? "white" : "#72767d"}
+                      color={activeTab === tab.key ? "white" : "#6B7280"}
                       fontSize="$3"
                       fontWeight="600"
+                      fontFamily={fontFamily}
                     >
                       {tab.label}
                     </Text>
                     {tab.count > 0 && (
                       <YStack
-                        backgroundColor={activeTab === tab.key ? "#5865F2" : "#40444b"}
+                        backgroundColor={activeTab === tab.key ? "#0EA5E9" : "#2D2E3F"}
                         borderRadius={10}
                         paddingHorizontal="$1.5"
                         marginLeft="$1"
                         minWidth={20}
                         alignItems="center"
                       >
-                        <Text color="white" fontSize="$1" fontWeight="700">
+                        <Text color="white" fontSize="$1" fontWeight="700" fontFamily={fontFamily}>
                           {tab.count}
                         </Text>
                       </YStack>
@@ -465,8 +477,8 @@ const FriendsList: React.FC<FriendsListProps> = ({
                 <>
                   {friends.length === 0 ? (
                     <YStack padding="$6" alignItems="center">
-                      <Users size={48} color="#40444b" />
-                      <Text color="#72767d" fontSize="$4" marginTop="$3" textAlign="center">
+                      <Users size={48} color="#2D2E3F" />
+                      <Text color="#6B7280" fontSize="$4" marginTop="$3" textAlign="center" fontFamily={fontFamily}>
                         No friends yet. Add someone by their username!
                       </Text>
                     </YStack>
@@ -480,8 +492,8 @@ const FriendsList: React.FC<FriendsListProps> = ({
                 <>
                   {incomingRequests.length === 0 ? (
                     <YStack padding="$6" alignItems="center">
-                      <UserPlus size={48} color="#40444b" />
-                      <Text color="#72767d" fontSize="$4" marginTop="$3" textAlign="center">
+                      <UserPlus size={48} color="#2D2E3F" />
+                      <Text color="#6B7280" fontSize="$4" marginTop="$3" textAlign="center" fontFamily={fontFamily}>
                         No incoming friend requests
                       </Text>
                     </YStack>
@@ -495,8 +507,8 @@ const FriendsList: React.FC<FriendsListProps> = ({
                 <>
                   {outgoingRequests.length === 0 ? (
                     <YStack padding="$6" alignItems="center">
-                      <Clock size={48} color="#40444b" />
-                      <Text color="#72767d" fontSize="$4" marginTop="$3" textAlign="center">
+                      <Clock size={48} color="#2D2E3F" />
+                      <Text color="#6B7280" fontSize="$4" marginTop="$3" textAlign="center" fontFamily={fontFamily}>
                         No pending friend requests
                       </Text>
                     </YStack>
@@ -516,7 +528,7 @@ const FriendsList: React.FC<FriendsListProps> = ({
           position="absolute"
           bottom={insets.bottom + 20}
           alignSelf="center"
-          backgroundColor="#323232"
+          backgroundColor="#252636"
           padding="$3"
           borderRadius="$4"
           marginHorizontal="$4"
@@ -526,7 +538,7 @@ const FriendsList: React.FC<FriendsListProps> = ({
           shadowOpacity={0.3}
           shadowRadius={8}
         >
-          <Text color="white" fontSize="$3">{snackbarMessage}</Text>
+          <Text color="white" fontSize="$3" fontFamily={fontFamily}>{snackbarMessage}</Text>
         </Card>
       )}
     </Modal>

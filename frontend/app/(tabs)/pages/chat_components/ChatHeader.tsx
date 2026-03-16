@@ -15,6 +15,7 @@ import {
 import type { Server } from "./types";
 import type { CallState } from "../../../../utils/useWebRTC";
 import type { ConversationData } from "../../../../utils/api";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 
 interface ChatHeaderProps {
   isDmMode: boolean;
@@ -53,13 +54,14 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
   onToggleDocuments,
   documentCount,
 }) => {
+  const { fontFamily } = usePreferences();
   const headerTitle = isDmMode
     ? (dmPartnerName ? `@${dmPartnerName}` : "Direct Message")
     : selectedServer?.name || "";
 
   const headerIcon = isDmMode
-    ? <MessageCircle size={isMobile ? 20 : 24} color="#72767d" />
-    : <Hash size={isMobile ? 20 : 24} color="#72767d" />;
+    ? <MessageCircle size={isMobile ? 20 : 24} color="#6B7280" />
+    : <Hash size={isMobile ? 20 : 24} color="#6B7280" />;
 
   const totalUnread = unreadDmCount + unreadServerCount;
 
@@ -69,20 +71,20 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
       paddingHorizontal={isMobile ? "$3" : "$4"}
       alignItems="center"
       justifyContent="space-between"
-      backgroundColor="#2f3136"
+      backgroundColor="#171823"
       borderBottomWidth={1}
-      borderBottomColor="#202225"
+      borderBottomColor="#2D2E3F"
     >
       <XStack alignItems="center" gap="$3" flex={1}>
         {!isDesktop && (
           <TouchableOpacity onPress={onToggleServerSidebar} style={{ position: "relative" }}>
-            <Menu size={24} color="#b9bbbe" />
+            <Menu size={24} color="#9CA3AF" />
             {totalUnread > 0 && (
               <YStack
                 position="absolute"
                 right={-6}
                 top={-6}
-                backgroundColor="#f04747"
+                backgroundColor="#EF4444"
                 borderRadius={8}
                 minWidth={16}
                 height={16}
@@ -90,7 +92,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
                 alignItems="center"
                 paddingHorizontal={4}
               >
-                <Text color="white" fontSize={10} fontWeight="700">
+                <Text color="white" fontSize={10} fontWeight="700" fontFamily={fontFamily}>
                   {totalUnread > 9 ? "9+" : totalUnread}
                 </Text>
               </YStack>
@@ -104,6 +106,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
           color="white"
           numberOfLines={1}
           flex={1}
+          fontFamily={fontFamily}
         >
           {headerTitle}
         </Text>
@@ -111,16 +114,16 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
       <XStack gap="$2" alignItems="center">
         {showReconnecting && (
           <XStack
-            backgroundColor="rgba(240,71,71,0.2)"
+            backgroundColor="rgba(239,68,68,0.2)"
             paddingHorizontal="$2"
             paddingVertical="$1"
             borderRadius="$2"
             alignItems="center"
             gap="$1"
           >
-            <WifiOff size={14} color="#f04747" />
+            <WifiOff size={14} color="#EF4444" />
             {!isMobile && (
-              <Text color="#f04747" fontSize="$1" fontWeight="600">
+              <Text color="#EF4444" fontSize="$1" fontWeight="600" fontFamily={fontFamily}>
                 Reconnecting
               </Text>
             )}
@@ -132,8 +135,8 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
             size="$3"
             backgroundColor="transparent"
             borderWidth={1}
-            borderColor="#43B581"
-            icon={<FileText size={16} color="#43B581" />}
+            borderColor="#10B981"
+            icon={<FileText size={16} color="#10B981" />}
             onPress={onToggleDocuments}
             pressStyle={{ backgroundColor: "rgba(67,181,129,0.1)" }}
           >
@@ -144,7 +147,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
               position="absolute"
               right={-4}
               top={-4}
-              backgroundColor="#43B581"
+              backgroundColor="#10B981"
               borderRadius={8}
               minWidth={16}
               height={16}
@@ -153,7 +156,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
               paddingHorizontal={4}
               pointerEvents="none"
             >
-              <Text color="white" fontSize={9} fontWeight="700">
+              <Text color="white" fontSize={9} fontWeight="700" fontFamily={fontFamily}>
                 {(documentCount ?? 0) > 9 ? "9+" : documentCount}
               </Text>
             </YStack>
@@ -166,20 +169,20 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
               size="$3"
               backgroundColor="transparent"
               borderWidth={1}
-              borderColor="#5865F2"
-              icon={<Phone size={16} color="#5865F2" />}
+              borderColor="#0EA5E9"
+              icon={<Phone size={16} color="#0EA5E9" />}
               onPress={() => onStartCall("voice")}
-              pressStyle={{ backgroundColor: "rgba(88,101,242,0.1)" }}
+              pressStyle={{ backgroundColor: "rgba(14,165,233,0.1)" }}
               disabled={callState.status !== "idle"}
             />
             <Button
               size="$3"
               backgroundColor="transparent"
               borderWidth={1}
-              borderColor="#5865F2"
-              icon={<Video size={16} color="#5865F2" />}
+              borderColor="#0EA5E9"
+              icon={<Video size={16} color="#0EA5E9" />}
               onPress={() => onStartCall("video")}
-              pressStyle={{ backgroundColor: "rgba(88,101,242,0.1)" }}
+              pressStyle={{ backgroundColor: "rgba(14,165,233,0.1)" }}
               disabled={callState.status !== "idle"}
             />
           </>
@@ -192,11 +195,11 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
                 size="$3"
                 backgroundColor="transparent"
                 borderWidth={1}
-                borderColor="#5865F2"
-                icon={<Users size={16} color="#5865F2" />}
+                borderColor="#0EA5E9"
+                icon={<Users size={16} color="#0EA5E9" />}
                 onPress={onToggleUserSidebar}
                 pressStyle={{
-                  backgroundColor: "rgba(88,101,242,0.1)",
+                  backgroundColor: "rgba(14,165,233,0.1)",
                 }}
               />
             )}
@@ -204,11 +207,11 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
               size="$3"
               backgroundColor="transparent"
               borderWidth={1}
-              borderColor="#5865F2"
-              icon={<Settings size={16} color="#5865F2" />}
+              borderColor="#0EA5E9"
+              icon={<Settings size={16} color="#0EA5E9" />}
               onPress={onOpenSettings}
               pressStyle={{
-                backgroundColor: "rgba(88,101,242,0.1)",
+                backgroundColor: "rgba(14,165,233,0.1)",
               }}
             >
               {!isMobile && "Settings"}

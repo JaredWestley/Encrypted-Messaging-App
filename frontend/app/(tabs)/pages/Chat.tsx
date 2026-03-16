@@ -16,10 +16,15 @@ import {
   Modal,
   Pressable,
   useWindowDimensions,
+  ActivityIndicator,
+  ScrollView,
 } from "react-native";
 import {
   Menu,
   X as CloseIcon,
+  ChevronDown,
+  ChevronRight,
+  Sparkles,
 } from "@tamagui/lucide-icons";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ServerSidebar from "./components/ServerSidebar";
@@ -30,20 +35,22 @@ import FriendsList from "./components/FriendsList";
 import IncomingCallModal from "./components/IncomingCallModal";
 import ActiveCallOverlay from "./components/ActiveCallOverlay";
 import VoiceChannelPanel from "./components/VoiceChannelPanel";
-import ChatHeader from "./_chat_components/ChatHeader";
-import ChatInput from "./_chat_components/ChatInput";
-import MessageBubble from "./_chat_components/MessageBubble";
-import MessageOptionsModal from "./_chat_components/MessageOptionsModal";
-import EmptyState from "./_chat_components/EmptyState";
-import TypingIndicator from "./_chat_components/TypingIndicator";
-import SnackbarToast from "./_chat_components/SnackbarToast";
-import DocumentListPanel from "./_chat_components/_collab/DocumentListPanel";
-import DocumentEditor from "./_chat_components/_collab/DocumentEditor";
-import WhiteboardEditor from "./_chat_components/_collab/WhiteboardEditor";
-import VersionHistoryPanel from "./_chat_components/_collab/VersionHistoryPanel";
-import { isImageMimeType, formatFileSize } from "./_chat_components/AttachmentImagePreview";
-import type { MessageAttachment, Message, Server, User, ImageDecryptContext } from "./_chat_components/types";
+import ChatHeader from "./chat_components/ChatHeader";
+import ChatInput from "./chat_components/ChatInput";
+import MessageBubble from "./chat_components/MessageBubble";
+import MessageOptionsModal from "./chat_components/MessageOptionsModal";
+import EmojiPicker from "./chat_components/EmojiPicker";
+import EmptyState from "./chat_components/EmptyState";
+import TypingIndicator from "./chat_components/TypingIndicator";
+import SnackbarToast from "./chat_components/SnackbarToast";
+import DocumentListPanel from "./chat_components/collab/DocumentListPanel";
+import DocumentEditor from "./chat_components/collab/DocumentEditor";
+import WhiteboardEditor from "./chat_components/collab/WhiteboardEditor";
+import VersionHistoryPanel from "./chat_components/collab/VersionHistoryPanel";
+import { isImageMimeType, formatFileSize } from "./chat_components/AttachmentImagePreview";
+import type { MessageAttachment, Message, Server, User, ImageDecryptContext } from "./chat_components/types";
 import { useWebRTC, type CallState } from "../../../utils/useWebRTC";
+import Markdown from "react-native-markdown-display";
 import { useVoiceChannel } from "../../../utils/useVoiceChannel";
 import { ICE_SERVERS } from "../../../utils/webrtcConfig";
 import * as DocumentPicker from "expo-document-picker";
@@ -83,6 +90,8 @@ import {
   saveDocumentVersion,
   fetchDocumentVersions,
   fetchDocumentVersion,
+  summarizeMessage,
+  toggleReaction,
   ConversationData,
   DirectMessageData,
   AttachmentData,
@@ -109,14 +118,33 @@ import {
   decodeBase64,
 } from "../../../utils/encryption";
 import { getOrCreateKeyPair, getPrivateKey, getServerKey, storeServerKey, clearServerKey } from "../../../utils/keyManager";
+import { usePreferences } from "../../../utils/PreferencesContext";
 
-
+const markdownStyles = {
+  body: { color: "#D1D5DB", fontSize: 14, lineHeight: 22 },
+  heading1: { color: "#E5E7EB", fontSize: 20, fontWeight: "700" as const, marginBottom: 6, marginTop: 8 },
+  heading2: { color: "#E5E7EB", fontSize: 17, fontWeight: "700" as const, marginBottom: 4, marginTop: 6 },
+  heading3: { color: "#E5E7EB", fontSize: 15, fontWeight: "600" as const, marginBottom: 4, marginTop: 4 },
+  strong: { color: "#F3F4F6", fontWeight: "700" as const },
+  em: { color: "#D1D5DB", fontStyle: "italic" as const },
+  bullet_list: { marginVertical: 4 },
+  ordered_list: { marginVertical: 4 },
+  list_item: { marginVertical: 2 },
+  code_inline: { backgroundColor: "#2D2E3F", color: "#A78BFA", paddingHorizontal: 4, borderRadius: 3, fontSize: 13 },
+  code_block: { backgroundColor: "#2D2E3F", color: "#D1D5DB", padding: 8, borderRadius: 6, fontSize: 13 },
+  fence: { backgroundColor: "#2D2E3F", color: "#D1D5DB", padding: 8, borderRadius: 6, fontSize: 13 },
+  blockquote: { backgroundColor: "#1E1F2E", borderLeftColor: "#A78BFA", borderLeftWidth: 3, paddingLeft: 10, paddingVertical: 4, marginVertical: 4 },
+  hr: { backgroundColor: "#374151", height: 1, marginVertical: 8 },
+  paragraph: { marginVertical: 2 },
+};
 
 const ChatPage: React.FC = () => {
   const router = useRouter();
   const { token, username, userId, logout, refreshAccessToken, isLoading: authLoading } = useAuth();
+  const { fontSizeValue, fontFamily } = usePreferences();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const chatInputRef = useRef<any>(null);
 
   // Responsive breakpoint
   const isDesktop = width >= 768;
@@ -140,6 +168,24 @@ const ChatPage: React.FC = () => {
   const [menuMessageId, setMenuMessageId] = useState<number | null>(null);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
+
+  // Reply state
+  const [replyingTo, setReplyingTo] = useState<{ id: number; username: string; content: string } | null>(null);
+
+  // Reaction state
+  const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
+  const [emojiPickerMessageId, setEmojiPickerMessageId] = useState<number | null>(null);
+
+  // Slowmode state
+  const [slowmodeCooldown, setSlowmodeCooldown] = useState(0);
+  const slowmodeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // AI Summary state
+  const [summaryVisible, setSummaryVisible] = useState(false);
+  const [summaryText, setSummaryText] = useState("");
+  const [summaryThinking, setSummaryThinking] = useState("");
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
 
   // File upload state
   const [isUploading, setIsUploading] = useState(false);
@@ -2037,7 +2083,7 @@ const ChatPage: React.FC = () => {
       // Build FormData
       const formData = new FormData();
       if (Platform.OS === "web") {
-        const blob = new Blob([encryptedBytes!], { type: "application/octet-stream" });
+        const blob = new Blob([new Uint8Array(encryptedBytes!)], { type: "application/octet-stream" });
         formData.append("file", blob, "encrypted.enc");
       } else {
         // For React Native, convert to base64 and use a data URI
@@ -2200,7 +2246,7 @@ const ChatPage: React.FC = () => {
         if (attachment.uploader_id === userId && attachment.sender_file_key_encrypted && attachment.sender_file_key_nonce) {
           decryptedBytes = decryptFileBytesFromDm(
             encryptedData, nonce, attachment.sender_file_key_encrypted, attachment.sender_file_key_nonce,
-            myKeyPairRef.current.publicKey, mySecretKey
+            myKeyPairRef.current!.publicKey, mySecretKey
           );
         }
 
@@ -2240,7 +2286,7 @@ const ChatPage: React.FC = () => {
 
       // Trigger download / share
       if (Platform.OS === "web") {
-        const blob = new Blob([decryptedBytes], { type: mimeType });
+        const blob = new Blob([new Uint8Array(decryptedBytes)], { type: mimeType });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -2276,7 +2322,14 @@ const ChatPage: React.FC = () => {
       return handleSendAttachment();
     }
     if (!input.trim() || !token) return;
+    // Slowmode check for server messages
+    if (!isDmMode && slowmodeCooldown > 0) {
+      setError(`Slow mode active – wait ${slowmodeCooldown}s`);
+      return;
+    }
     setError(null);
+    const currentReplyId = replyingTo?.id;
+    setReplyingTo(null);
 
     if (isDmMode && selectedConversationId) {
       // DM send
@@ -2289,6 +2342,7 @@ const ChatPage: React.FC = () => {
         content: messageContent,
         user_id: userId!,
         timestamp: new Date().toISOString(),
+        reply_to: replyingTo ? { id: replyingTo.id, content: replyingTo.content, username: replyingTo.username, user_id: 0 } : undefined,
       };
       setDmMessages(prev => [...prev, tempMessage]);
       setInput("");
@@ -2309,7 +2363,7 @@ const ChatPage: React.FC = () => {
                   sender_public_key: encodeBase64(myKeyPairRef.current.publicKey),
                 };
                 // Send ciphertext instead of plaintext
-                const result = await sendDirectMessage(token, selectedConversationId, ciphertext, logout, encryptionParams);
+                const result = await sendDirectMessage(token, selectedConversationId, ciphertext, logout, encryptionParams, currentReplyId);
                 setDmMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: result.id } : m));
                 loadConversationsRef.current();
                 if (!dmWsConnected) await loadDmMessages();
@@ -2321,7 +2375,7 @@ const ChatPage: React.FC = () => {
           }
         }
         // Unencrypted fallback
-        const result = await sendDirectMessage(token, selectedConversationId, messageContent, logout);
+        const result = await sendDirectMessage(token, selectedConversationId, messageContent, logout, undefined, currentReplyId);
         setDmMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: result.id } : m));
         loadConversationsRef.current();
         if (!dmWsConnected) await loadDmMessages();
@@ -2344,6 +2398,7 @@ const ChatPage: React.FC = () => {
         content: messageContent,
         user_id: userId!,
         timestamp: new Date().toISOString(),
+        reply_to: replyingTo ? { id: replyingTo.id, content: replyingTo.content, username: replyingTo.username, user_id: 0 } : undefined,
       };
       setMessages(prev => [...prev, tempMessage]);
       setInput("");
@@ -2368,23 +2423,31 @@ const ChatPage: React.FC = () => {
               nonce,
               sender_public_key: encodeBase64(myKeyPairRef.current.publicKey),
             };
-            const result: any = await sendMessage(token, ciphertext, selectedServer.id, userId!, logout, encryptionParams);
+            const result: any = await sendMessage(token, ciphertext, selectedServer.id, userId!, logout, encryptionParams, currentReplyId);
             if (!isConnected) {
               await loadMessages();
             } else if (result?.message_id) {
               setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: result.message_id } : m));
               sendAck(result.message_id);
             }
+            // Start slowmode cooldown
+            if (selectedServer && (selectedServer.slow_mode_seconds ?? 0) > 0) {
+              startSlowmodeCooldown(selectedServer.slow_mode_seconds!);
+            }
             return;
           }
         }
         // Unencrypted fallback
-        const result: any = await sendMessage(token, messageContent, selectedServer.id, userId!, logout);
+        const result: any = await sendMessage(token, messageContent, selectedServer.id, userId!, logout, undefined, currentReplyId);
         if (!isConnected) {
           await loadMessages();
         } else if (result?.message_id) {
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: result.message_id } : m));
           sendAck(result.message_id);
+        }
+        // Start slowmode cooldown
+        if (selectedServer && (selectedServer.slow_mode_seconds ?? 0) > 0) {
+          startSlowmodeCooldown(selectedServer.slow_mode_seconds!);
         }
       } catch (err: any) {
         setMessages(prev => prev.filter(m => m.id !== tempId));
@@ -2497,6 +2560,90 @@ const ChatPage: React.FC = () => {
     }
   };
 
+  const handleSummarize = async (messageId: number) => {
+    setMenuVisible(false);
+    const msg = currentMessages.find((m) => m.id === messageId);
+    if (!msg || !msg.content || msg.content.startsWith("📎 ")) {
+      showSnackbar("No text content to summarize");
+      return;
+    }
+    setSummaryLoading(true);
+    setSummaryText("");
+    setSummaryThinking("");
+    setThinkingExpanded(false);
+    setSummaryVisible(true);
+    try {
+      const result = await summarizeMessage(token!, msg.content, msg.id, isDmMode, logout);
+      setSummaryText(result.summary);
+      setSummaryThinking(result.thinking || "");
+    } catch (e: any) {
+      setSummaryText("Failed to generate summary. " + (e?.message || ""));
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  // ─── Reply handler ──────────────────────────────────────────────
+  const handleReplyPress = (messageId: number) => {
+    const msg = currentMessages.find((m) => m.id === messageId);
+    if (msg) {
+      setReplyingTo({
+        id: msg.id,
+        username: msg.username,
+        content: msg.content,
+      });
+      setMenuVisible(false);
+      chatInputRef.current?.focus?.();
+    }
+  };
+
+  const cancelReply = () => setReplyingTo(null);
+
+  // ─── Reaction handlers ────────────────────────────────────────
+  const handleReactionToggle = async (messageId: number, emoji: string) => {
+    if (!token) return;
+    try {
+      const result: any = await toggleReaction(token, messageId, emoji, isDmMode, selectedConversationId, logout);
+      // Update local message state with new reactions
+      const setFn = isDmMode ? setDmMessages : setMessages;
+      setFn((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, reactions: result.reactions } : m))
+      );
+    } catch (e: any) {
+      showSnackbar("Failed to react: " + (e?.message || ""));
+    }
+  };
+
+  const handleReactPress = (messageId: number) => {
+    setEmojiPickerMessageId(messageId);
+    setEmojiPickerVisible(true);
+  };
+
+  const handleEmojiSelect = (emoji: string) => {
+    if (emojiPickerMessageId !== null) {
+      handleReactionToggle(emojiPickerMessageId, emoji);
+    }
+    setEmojiPickerVisible(false);
+    setEmojiPickerMessageId(null);
+  };
+
+  // ─── Slowmode cooldown ────────────────────────────────────────
+  const startSlowmodeCooldown = useCallback((seconds: number) => {
+    if (seconds <= 0) return;
+    setSlowmodeCooldown(seconds);
+    if (slowmodeTimerRef.current) clearInterval(slowmodeTimerRef.current);
+    slowmodeTimerRef.current = setInterval(() => {
+      setSlowmodeCooldown((prev) => {
+        if (prev <= 1) {
+          if (slowmodeTimerRef.current) clearInterval(slowmodeTimerRef.current);
+          slowmodeTimerRef.current = null;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, []);
+
   const handleInputChange = (text: string) => {
     setInput(text);
     if (isDmMode && selectedConversationId) {
@@ -2572,8 +2719,42 @@ const ChatPage: React.FC = () => {
       userId={userId}
       imageDecryptCtxRef={imageDecryptCtxRef}
       onDownloadAttachment={handleDownloadAttachment}
+      fontSizeValue={fontSizeValue}
+      fontFamily={fontFamily}
+      onReplyPress={handleReplyPress}
+      onReactionToggle={handleReactionToggle}
+      onReactPress={handleReactPress}
+      currentUserId={userId ?? undefined}
     />
   );
+
+  // Keyboard navigation (web only)
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        // Close modals in priority order
+        if (menuVisible) { setMenuVisible(false); return; }
+        if (isUserDialogOpen) { setIsUserDialogOpen(false); return; }
+        if (isServerSettingsOpen) { setIsServerSettingsOpen(false); return; }
+        if (friendsListOpen) { setFriendsListOpen(false); return; }
+        if (selectedDocument) { setSelectedDocument(null); return; }
+        if (showDocPanel) { setShowDocPanel(false); return; }
+        if (showServerSidebar) { setShowServerSidebar(false); return; }
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        const active = window.document.activeElement;
+        const tag = active?.tagName?.toLowerCase();
+        // Only focus input if we're not already in a text field
+        if (tag !== "input" && tag !== "textarea" && !(active as HTMLElement)?.isContentEditable) {
+          e.preventDefault();
+          chatInputRef.current?.focus?.();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [menuVisible, isUserDialogOpen, isServerSettingsOpen, friendsListOpen, selectedDocument, showDocPanel, showServerSidebar]);
 
   useEffect(() => {
     if (!authLoading && !token) {
@@ -2589,7 +2770,7 @@ const ChatPage: React.FC = () => {
 
   return (
     <Theme name="dark">
-      <YStack flex={1} backgroundColor="#2f3136" paddingTop={insets.top}>
+      <YStack flex={1} backgroundColor="#171823" paddingTop={insets.top}>
         <XStack flex={1}>
           {/* Left Sidebar - Desktop: Always visible, Mobile: Modal */}
           {isDesktop ? (
@@ -2628,7 +2809,7 @@ const ChatPage: React.FC = () => {
                   width="80%"
                   maxWidth={300}
                   height="100%"
-                  backgroundColor="#2f3136"
+                  backgroundColor="#171823"
                   paddingTop={insets.top}
                 >
                   <XStack
@@ -2636,13 +2817,13 @@ const ChatPage: React.FC = () => {
                     justifyContent="space-between"
                     alignItems="center"
                     borderBottomWidth={1}
-                    borderBottomColor="#202225"
+                    borderBottomColor="#2D2E3F"
                   >
                     <Text fontSize="$6" fontWeight="700" color="white">
                       Messages
                     </Text>
                     <TouchableOpacity onPress={() => setShowServerSidebar(false)}>
-                      <CloseIcon size={24} color="#b9bbbe" />
+                      <CloseIcon size={24} color="#9CA3AF" />
                     </TouchableOpacity>
                   </XStack>
                   <ServerSidebar
@@ -2678,7 +2859,7 @@ const ChatPage: React.FC = () => {
 
           {/* Center Chat Panel */}
           {hasSelection ? (
-            <YStack flex={1} backgroundColor="#36393f">
+            <YStack flex={1} backgroundColor="#1E1F2B">
               <ChatHeader
                 isDmMode={isDmMode}
                 dmPartnerName={dmPartnerName}
@@ -2839,10 +3020,10 @@ const ChatPage: React.FC = () => {
                     style={{ flex: 1 }}
                     keyboardVerticalOffset={Platform.OS === "ios" ? (isMobile ? 90 : 100) : 0}
                   >
-                    <YStack flex={1} backgroundColor="#36393f">
+                    <YStack flex={1} backgroundColor="#1E1F2B">
                       {error && !channelPermissionDenied && (
                         <Card
-                          backgroundColor="#f44336"
+                          backgroundColor="#EF4444"
                           padding="$3"
                           margin="$3"
                           borderRadius="$3"
@@ -2857,17 +3038,17 @@ const ChatPage: React.FC = () => {
                           <YStack
                             backgroundColor="rgba(255, 152, 0, 0.15)"
                             borderWidth={1}
-                            borderColor="#ff9800"
+                            borderColor="#F59E0B"
                             borderRadius="$4"
                             padding="$4"
                             maxWidth={400}
                             alignItems="center"
                             gap="$2"
                           >
-                            <Text color="#ff9800" fontWeight="700" fontSize="$5" textAlign="center">
+                            <Text color="#F59E0B" fontWeight="700" fontSize="$5" textAlign="center">
                               Permission Denied
                             </Text>
-                            <Text color="#ffb74d" fontSize="$3" textAlign="center">
+                            <Text color="#FBBF24" fontSize="$3" textAlign="center">
                               You don't have permission to view messages in this channel. Contact a server admin to update your role.
                             </Text>
                           </YStack>
@@ -2889,6 +3070,49 @@ const ChatPage: React.FC = () => {
 
                     <TypingIndicator typingUsers={activeTypingUsers} isMobile={isMobile} />
 
+                    {/* Reply preview bar */}
+                    {replyingTo && (
+                      <XStack
+                        backgroundColor="#1E1F2B"
+                        borderLeftWidth={3}
+                        borderLeftColor="#0EA5E9"
+                        paddingHorizontal="$3"
+                        paddingVertical="$2"
+                        alignItems="center"
+                        justifyContent="space-between"
+                      >
+                        <YStack flex={1}>
+                          <Text color="#0EA5E9" fontSize={12} fontWeight="700">
+                            Replying to {replyingTo.username}
+                          </Text>
+                          <Text color="#6B7280" fontSize={12} numberOfLines={1}>
+                            {replyingTo.content.length > 60
+                              ? replyingTo.content.slice(0, 60) + "..."
+                              : replyingTo.content}
+                          </Text>
+                        </YStack>
+                        <TouchableOpacity onPress={cancelReply} style={{ padding: 4 }}>
+                          <Text color="#9CA3AF" fontSize={16} fontWeight="700">✕</Text>
+                        </TouchableOpacity>
+                      </XStack>
+                    )}
+
+                    {/* Slowmode cooldown indicator */}
+                    {!isDmMode && slowmodeCooldown > 0 && (
+                      <XStack
+                        backgroundColor="#2D2E3F"
+                        paddingHorizontal="$3"
+                        paddingVertical="$2"
+                        alignItems="center"
+                        justifyContent="center"
+                        gap="$2"
+                      >
+                        <Text color="#EF4444" fontSize={12} fontWeight="600">
+                          ⏱ Slow mode: {slowmodeCooldown}s remaining
+                        </Text>
+                      </XStack>
+                    )}
+
                     <ChatInput
                       input={input}
                       onInputChange={handleInputChange}
@@ -2905,6 +3129,9 @@ const ChatPage: React.FC = () => {
                       activeConversation={activeConversation}
                       getConversationDisplayName={getConversationDisplayName}
                       bottomInset={insets.bottom}
+                      fontSizeValue={fontSizeValue}
+                      fontFamily={fontFamily}
+                      inputRef={chatInputRef}
                     />
                   </KeyboardAvoidingView>
                 )}
@@ -2944,7 +3171,132 @@ const ChatPage: React.FC = () => {
             if (msg) handleEditClick(msg.id, msg.content);
           }}
           onDelete={() => menuMessageId && handleDeleteClick(menuMessageId)}
+          onSummarize={() => menuMessageId && handleSummarize(menuMessageId)}
+          onReply={() => menuMessageId && handleReplyPress(menuMessageId)}
+          onReact={() => {
+            if (menuMessageId) {
+              setMenuVisible(false);
+              handleReactPress(menuMessageId);
+            }
+          }}
         />
+
+        {/* Emoji Picker Modal */}
+        <EmojiPicker
+          visible={emojiPickerVisible}
+          onClose={() => {
+            setEmojiPickerVisible(false);
+            setEmojiPickerMessageId(null);
+          }}
+          onSelect={handleEmojiSelect}
+          usedEmojis={
+            emojiPickerMessageId
+              ? (currentMessages.find(m => m.id === emojiPickerMessageId)?.reactions ?? [])
+                  .filter(r => r.users.some(u => u.user_id === userId))
+                  .map(r => r.emoji)
+              : []
+          }
+        />
+
+        {/* AI Summary Modal */}
+        <Modal
+          visible={summaryVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setSummaryVisible(false)}
+        >
+          <Pressable
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.5)",
+              justifyContent: "center",
+              alignItems: "center",
+              padding: 20,
+            }}
+            onPress={() => setSummaryVisible(false)}
+          >
+            <Pressable onPress={(e) => e.stopPropagation()}>
+              <Card
+                backgroundColor="#171823"
+                padding="$4"
+                borderRadius="$4"
+                width={isMobile ? 320 : 440}
+                maxWidth={500}
+              >
+                <YStack gap="$3">
+                  <XStack alignItems="center" gap="$2">
+                    <Sparkles size={20} color="#A78BFA" />
+                    <Text color="#A78BFA" fontWeight="700" fontSize="$5">AI Summary</Text>
+                  </XStack>
+
+                  {summaryLoading ? (
+                    <YStack alignItems="center" gap="$3" paddingVertical="$4">
+                      <ActivityIndicator size="large" color="#A78BFA" />
+                      <Text color="#9CA3AF" fontSize="$3">Generating summary...</Text>
+                    </YStack>
+                  ) : (
+                    <YStack gap="$3">
+                      {/* Thinking Accordion */}
+                      {summaryThinking ? (
+                        <YStack>
+                          <TouchableOpacity onPress={() => setThinkingExpanded(!thinkingExpanded)}>
+                            <XStack
+                              alignItems="center"
+                              gap="$2"
+                              paddingVertical="$2"
+                              paddingHorizontal="$2"
+                              backgroundColor="#1E1F2E"
+                              borderRadius="$2"
+                            >
+                              {thinkingExpanded ? (
+                                <ChevronDown size={16} color="#6B7280" />
+                              ) : (
+                                <ChevronRight size={16} color="#6B7280" />
+                              )}
+                              <Text color="#6B7280" fontSize="$2" fontWeight="600">
+                                AI Thinking Process
+                              </Text>
+                            </XStack>
+                          </TouchableOpacity>
+                          {thinkingExpanded && (
+                            <YStack
+                              backgroundColor="#1E1F2E"
+                              borderRadius="$2"
+                              padding="$3"
+                              marginTop="$1"
+                              maxHeight={200}
+                            >
+                              <ScrollView>
+                                <Text color="#9CA3AF" fontSize="$2" lineHeight={18} fontStyle="italic">
+                                  {summaryThinking}
+                                </Text>
+                              </ScrollView>
+                            </YStack>
+                          )}
+                        </YStack>
+                      ) : null}
+
+                      {/* Summary Text */}
+                      <YStack maxHeight={200}>
+                        <ScrollView>
+                          <Markdown style={markdownStyles}>
+                            {summaryText}
+                          </Markdown>
+                        </ScrollView>
+                      </YStack>
+                    </YStack>
+                  )}
+
+                  <XStack justifyContent="flex-end">
+                    <TouchableOpacity onPress={() => setSummaryVisible(false)}>
+                      <Text color="#0EA5E9" fontWeight="600" fontSize="$3">Close</Text>
+                    </TouchableOpacity>
+                  </XStack>
+                </YStack>
+              </Card>
+            </Pressable>
+          </Pressable>
+        </Modal>
 
         {/* Settings Dialog - Only in server mode */}
         {isServerSettingsOpen && selectedServer && !isDmMode && (
@@ -3023,9 +3375,9 @@ const ChatPage: React.FC = () => {
             position="absolute"
             top={100}
             alignSelf="center"
-            backgroundColor="#36393f"
+            backgroundColor="#1E1F2B"
             borderWidth={1}
-            borderColor="#5865F2"
+            borderColor="#0EA5E9"
             padding="$3"
             borderRadius="$4"
             shadowColor="black"
@@ -3033,7 +3385,7 @@ const ChatPage: React.FC = () => {
             shadowOpacity={0.3}
             shadowRadius={8}
           >
-            <Text color="#b9bbbe" fontSize="$3">Call ended</Text>
+            <Text color="#9CA3AF" fontSize="$3">Call ended</Text>
           </Card>
         )}
 

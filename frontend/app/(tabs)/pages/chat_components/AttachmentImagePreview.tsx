@@ -139,8 +139,8 @@ const AttachmentImagePreview = React.memo(function AttachmentImagePreview({
   if (loading) {
     return (
       <YStack padding="$2" alignItems="center">
-        <Spinner size="small" color="#5865F2" />
-        <Text color="#72767d" fontSize="$2">Decrypting image...</Text>
+        <Spinner size="small" color="#0EA5E9" />
+        <Text color="#6B7280" fontSize="$2">Decrypting image...</Text>
       </YStack>
     );
   }
@@ -179,10 +179,10 @@ const AttachmentImagePreview = React.memo(function AttachmentImagePreview({
         )}
       </TouchableOpacity>
       <XStack alignItems="center" gap="$2">
-        <Text color="#72767d" fontSize="$2">{attachment.original_filename}</Text>
-        <Text color="#72767d" fontSize="$1">({formatFileSize(attachment.file_size)})</Text>
+        <Text color="#6B7280" fontSize="$2">{attachment.original_filename}</Text>
+        <Text color="#6B7280" fontSize="$1">({formatFileSize(attachment.file_size)})</Text>
         <TouchableOpacity onPress={() => ctxRef.current.handleDownloadAttachment(attachment)}>
-          <Download size={14} color="#5865F2" />
+          <Download size={14} color="#0EA5E9" />
         </TouchableOpacity>
       </XStack>
     </YStack>

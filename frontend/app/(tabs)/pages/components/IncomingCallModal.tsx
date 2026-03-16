@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from "react";
 import { Animated, Easing, Platform, Pressable } from "react-native";
 import { XStack, Text } from "tamagui";
 import { Phone, PhoneOff, Video } from "@tamagui/lucide-icons";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 interface IncomingCallModalProps {
@@ -19,6 +20,7 @@ export default function IncomingCallModal({
   onAccept,
   onReject,
 }: IncomingCallModalProps) {
+  const { fontFamily } = usePreferences();
   const insets = useSafeAreaInsets();
   // Slide-down animation
   const slideAnim = useRef(new Animated.Value(-120)).current;
@@ -95,7 +97,7 @@ export default function IncomingCallModal({
           width={36}
           height={36}
           borderRadius={18}
-          backgroundColor="#5865F2"
+          backgroundColor="#0EA5E9"
           justifyContent="center"
           alignItems="center"
         >
@@ -108,10 +110,10 @@ export default function IncomingCallModal({
 
         {/* Caller info */}
         <XStack flex={1} flexDirection="column" gap={1}>
-          <Text color="white" fontSize={14} fontWeight="700" numberOfLines={1}>
+          <Text color="white" fontSize={14} fontWeight="700" numberOfLines={1} fontFamily={fontFamily}>
             {callerName}
           </Text>
-          <Text color="#8e9297" fontSize={11}>
+          <Text color="#8e9297" fontSize={11} fontFamily={fontFamily}>
             Incoming {callType} call
           </Text>
         </XStack>
@@ -123,7 +125,7 @@ export default function IncomingCallModal({
             width: 36,
             height: 36,
             borderRadius: 18,
-            backgroundColor: "#ED4245",
+            backgroundColor: "#EF4444",
             justifyContent: "center",
             alignItems: "center",
           }}
@@ -138,7 +140,7 @@ export default function IncomingCallModal({
             width: 36,
             height: 36,
             borderRadius: 18,
-            backgroundColor: "#43B581",
+            backgroundColor: "#10B981",
             justifyContent: "center",
             alignItems: "center",
           }}

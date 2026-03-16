@@ -1,5 +1,6 @@
 import React from "react";
 import { XStack, Text } from "tamagui";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 
 interface TypingIndicatorProps {
   typingUsers: Map<number, string>;
@@ -7,6 +8,7 @@ interface TypingIndicatorProps {
 }
 
 const TypingIndicator: React.FC<TypingIndicatorProps> = ({ typingUsers, isMobile }) => {
+  const { fontFamily } = usePreferences();
   if (typingUsers.size === 0) return null;
 
   const names = Array.from(typingUsers.values());
@@ -23,9 +25,9 @@ const TypingIndicator: React.FC<TypingIndicatorProps> = ({ typingUsers, isMobile
     <XStack
       paddingHorizontal={isMobile ? "$3" : "$4"}
       paddingVertical="$1"
-      backgroundColor="#36393f"
+      backgroundColor="#1E1F2B"
     >
-      <Text color="#72767d" fontSize="$2" fontStyle="italic">
+      <Text color="#6B7280" fontSize="$2" fontStyle="italic" fontFamily={fontFamily}>
         {text}
       </Text>
     </XStack>

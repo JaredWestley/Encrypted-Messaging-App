@@ -12,6 +12,7 @@ import {
   fetchRoles
 } from "../../../../utils/api";
 import { useAuth } from "../../../../utils/AuthContext";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 
 interface Role {
   id: number;
@@ -51,6 +52,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [userRolesMap, setUserRolesMap] = useState<{ [userId: number]: number[] }>({});
 
   const { userId } = useAuth();
+  const { fontSizeValue, fontFamily } = usePreferences();
 
   const showToast = (message: string) => {
     setSnackbarMessage(message);
@@ -204,21 +206,21 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   if (error) {
     return (
       <YStack padding="$4">
-        <Text color="#f04747">{error}</Text>
+        <Text color="#EF4444" fontFamily={fontFamily}>{error}</Text>
       </YStack>
     );
   }
 
   return (
     <YStack gap="$3">
-      <Text fontSize="$6" fontWeight="700" color="white">
+      <Text fontSize="$6" fontWeight="700" color="white" fontFamily={fontFamily}>
         Members ({members.length})
       </Text>
 
       {members.length === 0 ? (
-        <Text color="#72767d" fontSize="$3">No members found</Text>
+        <Text color="#6B7280" fontSize="$3" fontFamily={fontFamily}>No members found</Text>
       ) : (
-        <YStack backgroundColor="#202225" borderRadius="$3">
+        <YStack backgroundColor="#2D2E3F" borderRadius="$3">
           {members.map((user, index) => {
             const isOwnerUser = user.id === selectedServerOwnerId;
             const isSelf = user.id === userId;
@@ -242,22 +244,22 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                   padding="$3"
                   justifyContent="space-between"
                   alignItems="center"
-                  pressStyle={{ backgroundColor: "#2f3136" }}
+                  pressStyle={{ backgroundColor: "#171823" }}
                 >
                   <YStack flex={1}>
                     <XStack alignItems="center" gap="$2" marginBottom="$2">
-                      <Text color="white" fontSize="$4">
+                      <Text color="white" fontSize="$4" fontFamily={fontFamily}>
                         {user.username}
                       </Text>
                       {isOwnerUser && (
-                        <Text color="#faa61a" fontSize="$2" fontWeight="600">Owner</Text>
+                        <Text color="#F59E0B" fontSize="$2" fontWeight="600" fontFamily={fontFamily}>Owner</Text>
                       )}
                       {isSelf && (
-                        <Text color="#72767d" fontSize="$2">(You)</Text>
+                        <Text color="#6B7280" fontSize="$2" fontFamily={fontFamily}>(You)</Text>
                       )}
                     </XStack>
 
-                    <Text color="#b9bbbe" fontSize="$2">
+                    <Text color="#9CA3AF" fontSize="$2" fontFamily={fontFamily}>
                       Roles: {userRolesMap[user.id]?.map(roleId =>
                         allRoles.find(r => r.id === roleId)?.name
                       ).join(", ") || "None"}
@@ -279,8 +281,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         opacity={kickDisabled ? 0.3 : 1}
                         alignItems="center"
                       >
-                        <UserX size={20} color={kickDisabled ? "gray" : "#ffb347"} />
-                        <Text color={kickDisabled ? "gray" : "#ffb347"} fontSize={10} marginTop={2}>
+                        <UserX size={20} color={kickDisabled ? "gray" : "#FBBF24"} />
+                        <Text color={kickDisabled ? "gray" : "#FBBF24"} fontSize={10} marginTop={2} fontFamily={fontFamily}>
                           Kick
                         </Text>
                       </YStack>
@@ -300,15 +302,15 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         opacity={banDisabled ? 0.3 : 1}
                         alignItems="center"
                       >
-                        <Shield size={20} color={banDisabled ? "gray" : "#ff5555"} />
-                        <Text color={banDisabled ? "gray" : "#ff5555"} fontSize={10} marginTop={2}>
+                        <Shield size={20} color={banDisabled ? "gray" : "#EF4444"} />
+                        <Text color={banDisabled ? "gray" : "#EF4444"} fontSize={10} marginTop={2} fontFamily={fontFamily}>
                           Ban
                         </Text>
                       </YStack>
                     </TouchableOpacity>
                   </XStack>
                 </XStack>
-                {index < members.length - 1 && <Separator borderColor="#2f3136" />}
+                {index < members.length - 1 && <Separator borderColor="#171823" />}
               </YStack>
             );
           })}
@@ -317,29 +319,29 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
       {bannedUsers.length > 0 && (
         <>
-          <Text fontSize="$6" fontWeight="700" color="white" marginTop="$2">
+          <Text fontSize="$6" fontWeight="700" color="white" marginTop="$2" fontFamily={fontFamily}>
             Banned Members ({bannedUsers.length})
           </Text>
 
-          <YStack backgroundColor="#2b2d31" borderRadius="$3">
+          <YStack backgroundColor="#1A1B26" borderRadius="$3">
             {bannedUsers.map((user, index) => (
               <YStack key={user.id}>
                 <XStack
                   padding="$3"
                   justifyContent="space-between"
                   alignItems="center"
-                  pressStyle={{ backgroundColor: "#393c43" }}
+                  pressStyle={{ backgroundColor: "#2D2E3F" }}
                 >
-                  <Text color="white" fontSize="$4">
+                  <Text color="white" fontSize="$4" fontFamily={fontFamily}>
                     {user.username}
                   </Text>
                   <TouchableOpacity onPress={() => unbanUser(user.id, user.username)}>
                     <YStack padding="$2">
-                      <Undo size={20} color="#77dd77" />
+                      <Undo size={20} color="#34D399" />
                     </YStack>
                   </TouchableOpacity>
                 </XStack>
-                {index < bannedUsers.length - 1 && <Separator borderColor="#393c43" />}
+                {index < bannedUsers.length - 1 && <Separator borderColor="#2D2E3F" />}
               </YStack>
             ))}
           </YStack>
@@ -352,7 +354,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           position="absolute"
           bottom={20}
           alignSelf="center"
-          backgroundColor="#323232"
+          backgroundColor="#252636"
           padding="$3"
           borderRadius="$3"
           enterStyle={{
@@ -360,7 +362,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             y: 20,
           }}
         >
-          <Text color="white">{snackbarMessage}</Text>
+          <Text color="white" fontFamily={fontFamily}>{snackbarMessage}</Text>
         </YStack>
       )}
     </YStack>

@@ -14,12 +14,14 @@ class UserRead(BaseModel):
     username: str
     email: str
     icon_url: Optional[str] = None
+    bio: Optional[str] = None
     created_at: datetime
 
 class PublicUserRead(BaseModel):
     id: int
     username: str
     icon_url: Optional[str] = None
+    bio: Optional[str] = None
     created_at: Optional[datetime] = None
 
 class UserUpdate(BaseModel):
@@ -27,6 +29,7 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     current_password: Optional[str] = None
     new_password: Optional[str] = None
+    bio: Optional[str] = None
 
 class LoginRequest(BaseModel):
     username: str
@@ -45,6 +48,7 @@ class MessageCreate(BaseModel):
     nonce: Optional[str] = None
     sender_public_key: Optional[str] = None
     attachment_id: Optional[int] = None
+    reply_to_id: Optional[int] = None
 
 class MessageUpdate(BaseModel):
     content: str
@@ -98,7 +102,8 @@ class ServerRead(BaseModel):
 
 
 class ServerUpdate(BaseModel):
-    name: str
+    name: Optional[str] = None
+    slow_mode_seconds: Optional[int] = None
 
 
 # ─── Friends & Direct Messages ────────────────────────────────────
@@ -133,6 +138,7 @@ class DirectMessageCreate(BaseModel):
     nonce: Optional[str] = None
     sender_public_key: Optional[str] = None
     attachment_id: Optional[int] = None
+    reply_to_id: Optional[int] = None
 
 class DirectMessageRead(BaseModel):
     id: int

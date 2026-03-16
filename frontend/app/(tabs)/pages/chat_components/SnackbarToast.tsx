@@ -1,5 +1,6 @@
 import React from "react";
 import { Card, Text } from "tamagui";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 
 interface SnackbarToastProps {
   visible: boolean;
@@ -14,6 +15,7 @@ const SnackbarToast: React.FC<SnackbarToastProps> = ({
   bottomInset,
   isMobile,
 }) => {
+  const { fontFamily } = usePreferences();
   if (!visible) return null;
 
   return (
@@ -21,7 +23,7 @@ const SnackbarToast: React.FC<SnackbarToastProps> = ({
       position="absolute"
       bottom={bottomInset + 20}
       alignSelf="center"
-      backgroundColor="#323232"
+      backgroundColor="#252636"
       padding={isMobile ? "$4" : "$3"}
       borderRadius="$4"
       marginHorizontal="$4"
@@ -31,7 +33,7 @@ const SnackbarToast: React.FC<SnackbarToastProps> = ({
       shadowOpacity={0.3}
       shadowRadius={8}
     >
-      <Text color="white" fontSize={isMobile ? "$4" : "$3"}>{message}</Text>
+      <Text color="white" fontSize={isMobile ? "$4" : "$3"} fontFamily={fontFamily}>{message}</Text>
     </Card>
   );
 };

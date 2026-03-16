@@ -12,6 +12,7 @@ import {
   ChevronLeft,
 } from "@tamagui/lucide-icons";
 import type { CollabDocumentData } from "../../../../../utils/api";
+import { usePreferences } from "../../../../../utils/PreferencesContext";
 
 interface DocumentListPanelProps {
   documents: CollabDocumentData[];
@@ -34,6 +35,7 @@ const DocumentListPanel: React.FC<DocumentListPanelProps> = ({
   selectedDocId,
   isMobile,
 }) => {
+  const { fontFamily } = usePreferences();
   const [showCreate, setShowCreate] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [createType, setCreateType] = useState<"document" | "whiteboard">("document");
@@ -103,7 +105,7 @@ const DocumentListPanel: React.FC<DocumentListPanelProps> = ({
           gap="$2"
           hoverStyle={{ backgroundColor: "rgba(255,255,255,0.05)" }}
         >
-          <Icon size={18} color={item.doc_type === "whiteboard" ? "#43B581" : "#5865F2"} />
+          <Icon size={18} color={item.doc_type === "whiteboard" ? "#10B981" : "#0EA5E9"} />
           <YStack flex={1}>
             {isRenaming ? (
               <XStack gap="$1" alignItems="center">
@@ -114,33 +116,34 @@ const DocumentListPanel: React.FC<DocumentListPanelProps> = ({
                   onChangeText={setRenameTitle}
                   onSubmitEditing={() => handleRenameSubmit(item.id)}
                   autoFocus
-                  backgroundColor="#40444b"
+                  backgroundColor="#2D2E3F"
                   color="white"
-                  borderColor="#5865F2"
+                  borderColor="#0EA5E9"
+                  fontFamily={fontFamily}
                 />
                 <Button
                   size="$2"
-                  backgroundColor="#5865F2"
+                  backgroundColor="#0EA5E9"
                   onPress={() => handleRenameSubmit(item.id)}
                 >
-                  <Text color="white" fontSize={11}>Save</Text>
+                  <Text color="white" fontSize={11} fontFamily={fontFamily}>Save</Text>
                 </Button>
                 <Button
                   size="$2"
                   backgroundColor="transparent"
                   onPress={() => { setRenamingId(null); setRenameTitle(""); }}
                 >
-                  <CloseIcon size={14} color="#b9bbbe" />
+                  <CloseIcon size={14} color="#9CA3AF" />
                 </Button>
               </XStack>
             ) : (
               <>
-                <Text color="white" fontSize={14} numberOfLines={1}>
+                <Text color="white" fontSize={14} numberOfLines={1} fontFamily={fontFamily}>
                   {item.title}
                 </Text>
                 <XStack alignItems="center" gap="$1">
-                  <Clock size={10} color="#72767d" />
-                  <Text color="#72767d" fontSize={11}>
+                  <Clock size={10} color="#6B7280" />
+                  <Text color="#6B7280" fontSize={11} fontFamily={fontFamily}>
                     {formatDate(item.updated_at)}
                   </Text>
                 </XStack>
@@ -156,7 +159,7 @@ const DocumentListPanel: React.FC<DocumentListPanelProps> = ({
                   setRenameTitle(item.title);
                 }}
               >
-                <Edit3 size={14} color="#b9bbbe" />
+                <Edit3 size={14} color="#9CA3AF" />
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={(e: any) => {
@@ -164,7 +167,7 @@ const DocumentListPanel: React.FC<DocumentListPanelProps> = ({
                   handleDelete(item.id, item.title);
                 }}
               >
-                <Trash2 size={14} color="#ED4245" />
+                <Trash2 size={14} color="#EF4444" />
               </TouchableOpacity>
             </XStack>
           )}
@@ -176,9 +179,9 @@ const DocumentListPanel: React.FC<DocumentListPanelProps> = ({
   return (
     <YStack
       width={isMobile ? "100%" : 280}
-      backgroundColor="#2f3136"
+      backgroundColor="#171823"
       borderRightWidth={isMobile ? 0 : 1}
-      borderRightColor="#202225"
+      borderRightColor="#2D2E3F"
       height="100%"
     >
       {/* Header */}
@@ -188,29 +191,29 @@ const DocumentListPanel: React.FC<DocumentListPanelProps> = ({
         alignItems="center"
         justifyContent="space-between"
         borderBottomWidth={1}
-        borderBottomColor="#202225"
+        borderBottomColor="#2D2E3F"
       >
         <XStack alignItems="center" gap="$2">
           {isMobile && (
             <TouchableOpacity onPress={onClose}>
-              <ChevronLeft size={20} color="#b9bbbe" />
+              <ChevronLeft size={20} color="#9CA3AF" />
             </TouchableOpacity>
           )}
-          <Text color="white" fontSize={16} fontWeight="600">
+          <Text color="white" fontSize={16} fontWeight="600" fontFamily={fontFamily}>
             Documents
           </Text>
         </XStack>
         <XStack gap="$2" alignItems="center">
           <Button
             size="$2"
-            backgroundColor="#5865F2"
+            backgroundColor="#0EA5E9"
             icon={<Plus size={14} color="white" />}
             onPress={() => setShowCreate(!showCreate)}
-            pressStyle={{ backgroundColor: "#4752C4" }}
+            pressStyle={{ backgroundColor: "#0284C7" }}
           />
           {!isMobile && (
             <TouchableOpacity onPress={onClose}>
-              <CloseIcon size={16} color="#b9bbbe" />
+              <CloseIcon size={16} color="#9CA3AF" />
             </TouchableOpacity>
           )}
         </XStack>
@@ -223,13 +226,13 @@ const DocumentListPanel: React.FC<DocumentListPanelProps> = ({
           paddingVertical="$2"
           gap="$2"
           borderBottomWidth={1}
-          borderBottomColor="#202225"
+          borderBottomColor="#2D2E3F"
           backgroundColor="#292b2f"
         >
           <XStack justifyContent="space-between" alignItems="center">
-            <Text color="#b9bbbe" fontSize={12} fontWeight="600">New Document</Text>
+            <Text color="#9CA3AF" fontSize={12} fontWeight="600" fontFamily={fontFamily}>New Document</Text>
             <TouchableOpacity onPress={() => { setShowCreate(false); setNewTitle(""); }}>
-              <CloseIcon size={14} color="#b9bbbe" />
+              <CloseIcon size={14} color="#9CA3AF" />
             </TouchableOpacity>
           </XStack>
           <Input
@@ -237,39 +240,40 @@ const DocumentListPanel: React.FC<DocumentListPanelProps> = ({
             placeholder="Document title..."
             value={newTitle}
             onChangeText={setNewTitle}
-            backgroundColor="#40444b"
+            backgroundColor="#2D2E3F"
             color="white"
-            borderColor="#202225"
+            borderColor="#2D2E3F"
+            fontFamily={fontFamily}
             // @ts-ignore
-            placeholderTextColor="#72767d"
+            placeholderTextColor="#6B7280"
           />
           <XStack gap="$2">
             <Button
               flex={1}
               size="$3"
-              backgroundColor={createType === "document" ? "#5865F2" : "#40444b"}
+              backgroundColor={createType === "document" ? "#0EA5E9" : "#2D2E3F"}
               onPress={() => setCreateType("document")}
               icon={<FileText size={14} color="white" />}
             >
-              <Text color="white" fontSize={12}>Document</Text>
+              <Text color="white" fontSize={12} fontFamily={fontFamily}>Document</Text>
             </Button>
             <Button
               flex={1}
               size="$3"
-              backgroundColor={createType === "whiteboard" ? "#43B581" : "#40444b"}
+              backgroundColor={createType === "whiteboard" ? "#10B981" : "#2D2E3F"}
               onPress={() => setCreateType("whiteboard")}
               icon={<PenTool size={14} color="white" />}
             >
-              <Text color="white" fontSize={12}>Whiteboard</Text>
+              <Text color="white" fontSize={12} fontFamily={fontFamily}>Whiteboard</Text>
             </Button>
           </XStack>
           <Button
             size="$3"
-            backgroundColor="#5865F2"
+            backgroundColor="#0EA5E9"
             onPress={handleCreate}
-            pressStyle={{ backgroundColor: "#4752C4" }}
+            pressStyle={{ backgroundColor: "#0284C7" }}
           >
-            <Text color="white" fontSize={13} fontWeight="600">Create</Text>
+            <Text color="white" fontSize={13} fontWeight="600" fontFamily={fontFamily}>Create</Text>
           </Button>
         </YStack>
       )}
@@ -277,11 +281,11 @@ const DocumentListPanel: React.FC<DocumentListPanelProps> = ({
       {/* Document List */}
       {documents.length === 0 ? (
         <YStack flex={1} justifyContent="center" alignItems="center" padding="$4">
-          <FileText size={40} color="#72767d" />
-          <Text color="#72767d" fontSize={14} textAlign="center" marginTop="$2">
+          <FileText size={40} color="#6B7280" />
+          <Text color="#6B7280" fontSize={14} textAlign="center" marginTop="$2" fontFamily={fontFamily}>
             No documents yet
           </Text>
-          <Text color="#72767d" fontSize={12} textAlign="center">
+          <Text color="#6B7280" fontSize={12} textAlign="center" fontFamily={fontFamily}>
             Create one to get started
           </Text>
         </YStack>

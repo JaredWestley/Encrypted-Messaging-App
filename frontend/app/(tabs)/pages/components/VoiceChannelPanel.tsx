@@ -3,6 +3,7 @@ import { YStack, XStack, Text, Button, Input, Separator } from "tamagui";
 import { TouchableOpacity, useWindowDimensions } from "react-native";
 import { Mic, MicOff, PhoneOff, Volume2, Plus } from "@tamagui/lucide-icons";
 import { fetchVoiceChannels, createVoiceChannel, deleteVoiceChannel, VoiceChannelData } from "../../../../utils/api";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 import type { VoiceChannelState } from "../../../../utils/useVoiceChannel";
 
 interface VoiceChannelPanelProps {
@@ -26,6 +27,7 @@ const VoiceChannelPanel: React.FC<VoiceChannelPanelProps> = ({
   onLeaveChannel,
   onToggleMute,
 }) => {
+  const { fontFamily } = usePreferences();
   const { width } = useWindowDimensions();
   const isMobile = width < 600;
   const [channels, setChannels] = useState<VoiceChannelData[]>([]);
@@ -79,7 +81,7 @@ const VoiceChannelPanel: React.FC<VoiceChannelPanelProps> = ({
 
   return (
     <YStack>
-      <Separator borderColor="#40444b" />
+      <Separator borderColor="#2D2E3F" />
 
       {/* Section Header */}
       <XStack
@@ -90,7 +92,7 @@ const VoiceChannelPanel: React.FC<VoiceChannelPanelProps> = ({
       >
         <XStack alignItems="center" gap="$2">
           <Volume2 size={14} color="#8e9297" />
-          <Text color="#8e9297" fontSize="$1" fontWeight="700" textTransform="uppercase">
+          <Text color="#8e9297" fontSize="$1" fontWeight="700" textTransform="uppercase" fontFamily={fontFamily}>
             Voice Channels
           </Text>
         </XStack>
@@ -105,23 +107,24 @@ const VoiceChannelPanel: React.FC<VoiceChannelPanelProps> = ({
           <Input
             flex={1}
             size="$2"
-            backgroundColor="#40444b"
+            backgroundColor="#2D2E3F"
             borderWidth={0}
-            color="#dcddde"
+            color="#D1D5DB"
             placeholder="Channel name"
             //@ts-ignore
-            placeholderTextColor="#72767d"
+            placeholderTextColor="#6B7280"
             value={newChannelName}
             onChangeText={setNewChannelName}
             onSubmitEditing={handleCreateChannel}
+            fontFamily={fontFamily}
           />
           <Button
             size="$2"
-            backgroundColor="#43b581"
+            backgroundColor="#10B981"
             onPress={handleCreateChannel}
             pressStyle={{ backgroundColor: "#3ca374" }}
           >
-            <Text color="white" fontSize="$2" fontWeight="600">Add</Text>
+            <Text color="white" fontSize="$2" fontWeight="600" fontFamily={fontFamily}>Add</Text>
           </Button>
         </XStack>
       )}
@@ -154,16 +157,17 @@ const VoiceChannelPanel: React.FC<VoiceChannelPanelProps> = ({
                 borderRadius="$2"
                 marginHorizontal="$2"
               >
-                <Volume2 size={16} color={isCurrentChannel ? "#43b581" : "#8e9297"} />
+                <Volume2 size={16} color={isCurrentChannel ? "#10B981" : "#8e9297"} />
                 <Text
                   color={isCurrentChannel ? "white" : "#8e9297"}
                   fontSize="$3"
                   flex={1}
                   numberOfLines={1}
+                  fontFamily={fontFamily}
                 >
                   {channel.name}
                 </Text>
-                <Text color="#72767d" fontSize="$1">
+                <Text color="#6B7280" fontSize="$1" fontFamily={fontFamily}>
                   {displayUsers.length}/{channel.user_limit}
                 </Text>
               </XStack>
@@ -186,15 +190,15 @@ const VoiceChannelPanel: React.FC<VoiceChannelPanelProps> = ({
                         width={20}
                         height={20}
                         borderRadius={10}
-                        backgroundColor="#5865F2"
+                        backgroundColor="#0EA5E9"
                         alignItems="center"
                         justifyContent="center"
                       >
-                        <Text color="white" fontSize={10} fontWeight="700">
+                        <Text color="white" fontSize={10} fontWeight="700" fontFamily={fontFamily}>
                           {user.username.charAt(0).toUpperCase()}
                         </Text>
                       </YStack>
-                      <Text color="#b9bbbe" fontSize="$2" numberOfLines={1}>
+                      <Text color="#9CA3AF" fontSize="$2" numberOfLines={1} fontFamily={fontFamily}>
                         {user.username}
                         {uid === userId ? " (you)" : ""}
                       </Text>
@@ -217,25 +221,25 @@ const VoiceChannelPanel: React.FC<VoiceChannelPanelProps> = ({
           gap="$2"
           marginTop="$2"
           borderTopWidth={1}
-          borderTopColor="#40444b"
+          borderTopColor="#2D2E3F"
         >
           <YStack flex={1}>
-            <Text color="#43b581" fontSize="$2" fontWeight="600">
+            <Text color="#10B981" fontSize="$2" fontWeight="600" fontFamily={fontFamily}>
               Voice Connected
             </Text>
-            <Text color="#8e9297" fontSize="$1">
+            <Text color="#8e9297" fontSize="$1" fontFamily={fontFamily}>
               {channels.find((c) => c.id === voiceState.channelId)?.name ?? ""}
             </Text>
           </YStack>
           <TouchableOpacity onPress={onToggleMute}>
             {voiceState.isMuted ? (
-              <MicOff size={18} color="#f04747" />
+              <MicOff size={18} color="#EF4444" />
             ) : (
-              <Mic size={18} color="#b9bbbe" />
+              <Mic size={18} color="#9CA3AF" />
             )}
           </TouchableOpacity>
           <TouchableOpacity onPress={onLeaveChannel}>
-            <PhoneOff size={18} color="#f04747" />
+            <PhoneOff size={18} color="#EF4444" />
           </TouchableOpacity>
         </XStack>
       )}

@@ -19,6 +19,8 @@ export interface Message {
   content: string;
   user_id: number;
   timestamp: string;
+  reply_to?: { id: number; content: string; username: string; user_id: number } | null;
+  reactions?: { emoji: string; count: number; users: { user_id: number; username: string }[] }[];
   attachment?: MessageAttachment | null;
   _encrypted?: boolean;
   _rawContent?: string;
@@ -31,6 +33,7 @@ export interface Server {
   name: string;
   owner_id?: number;
   icon_url?: string;
+  slow_mode_seconds?: number;
 }
 
 export interface User {

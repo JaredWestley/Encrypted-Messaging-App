@@ -1,7 +1,8 @@
+import os
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy import text, inspect
 
-DATABASE_URL = "sqlite:///./chat.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./chat.db")
 engine = create_engine(DATABASE_URL, echo=True)
 
 
@@ -45,6 +46,22 @@ def init_db():
         # Attachment sender self-decryption fields for DM file attachments
         add_column_if_missing(conn, "attachment", "sender_file_key_encrypted", "TEXT")
         add_column_if_missing(conn, "attachment", "sender_file_key_nonce", "TEXT")
+
+        # AI summary cache fields
+        add_column_if_missing(conn, "message", "ai_summary", "TEXT")
+        add_column_if_missing(conn, "message", "ai_thinking", "TEXT")
+        add_column_if_missing(conn, "directmessage", "ai_summary", "TEXT")
+        add_column_if_missing(conn, "directmessage", "ai_thinking", "TEXT")
+
+        # User bio
+        add_column_if_missing(conn, "user", "bio", "TEXT")
+
+        # Server slow mode
+        add_column_if_missing(conn, "server", "slow_mode_seconds", "INTEGER", "0")
+
+        # Message replies
+        add_column_if_missing(conn, "message", "reply_to_id", "INTEGER")
+        add_column_if_missing(conn, "directmessage", "reply_to_id", "INTEGER")
 
         conn.commit()
 

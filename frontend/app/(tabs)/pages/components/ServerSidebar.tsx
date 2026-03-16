@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createServer, fetchServers, joinServerWithInvite, fetchConversations, ConversationData } from "../../../../utils/api";
 import { BASE_URL } from "../../../../utils/config";
 import UserSettingsDialog from "./UserSettingsDialog";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 
 interface Server {
   id: number;
@@ -58,6 +59,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
   unreadServers = new Set(),
   onOpenFriends,
 }) => {
+  const { fontSizeValue, fontFamily } = usePreferences();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const isMobile = width < 600;
@@ -170,7 +172,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
     <>
       <YStack
         width={isMobile ? "100%" : 72}
-        backgroundColor="#202225"
+        backgroundColor="#2D2E3F"
         height="100%"
       >
         {/* Header - Mobile only */}
@@ -179,9 +181,9 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
             paddingHorizontal="$4"
             paddingVertical="$3"
             borderBottomWidth={1}
-            borderBottomColor="#18191c"
+            borderBottomColor="#1A1B26"
           >
-            <Text fontSize="$5" fontWeight="700" color="white">
+            <Text fontSize="$5" fontWeight="700" color="white" fontFamily={fontFamily}>
               Messages
             </Text>
           </YStack>
@@ -207,7 +209,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                   right={isMobile ? 8 : -4}
                   top={isMobile ? 2 : -4}
                   zIndex={10}
-                  backgroundColor="#f04747"
+                  backgroundColor="#EF4444"
                   borderRadius={10}
                   minWidth={20}
                   height={20}
@@ -215,7 +217,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                   alignItems="center"
                   paddingHorizontal="$1"
                 >
-                  <Text color="white" fontSize="$1" fontWeight="700">
+                  <Text color="white" fontSize="$1" fontWeight="700" fontFamily={fontFamily}>
                     {incomingRequestsCount + outgoingRequestsCount}
                   </Text>
                 </YStack>
@@ -226,7 +228,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                   style={{ width: '100%' }}
                 >
                   <XStack
-                    backgroundColor="#2f3136"
+                    backgroundColor="#171823"
                     padding="$3"
                     borderRadius="$3"
                     alignItems="center"
@@ -236,13 +238,13 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                       width={48}
                       height={48}
                       borderRadius={24}
-                      backgroundColor="#43b581"
+                      backgroundColor="#10B981"
                       justifyContent="center"
                       alignItems="center"
                     >
                       <Users size={24} color="white" />
                     </YStack>
-                    <Text color="white" fontSize="$4" fontWeight="600">
+                    <Text color="white" fontSize="$4" fontWeight="600" fontFamily={fontFamily}>
                       Friends
                     </Text>
                   </XStack>
@@ -253,7 +255,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                     width={56}
                     height={56}
                     borderRadius={28}
-                    backgroundColor="#43b581"
+                    backgroundColor="#10B981"
                     justifyContent="center"
                     alignItems="center"
                     hoverStyle={{ borderRadius: 16 }}
@@ -280,7 +282,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                   >
                     {isMobile ? (
                       <XStack
-                        backgroundColor={isSelected ? "#5865F2" : (hasUnread && !isSelected ? "#2a2d31" : "#2f3136")}
+                        backgroundColor={isSelected ? "#0EA5E9" : (hasUnread && !isSelected ? "#1A1B26" : "#171823")}
                         padding="$3"
                         borderRadius="$3"
                         alignItems="center"
@@ -297,7 +299,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                             width={12}
                             height={12}
                             borderRadius={6}
-                            backgroundColor="#f04747"
+                            backgroundColor="#EF4444"
                           />
                         )}
                         {iconUrl ? (
@@ -310,20 +312,20 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                             width={48}
                             height={48}
                             borderRadius={24}
-                            backgroundColor="#7289da"
+                            backgroundColor="#38BDF8"
                             justifyContent="center"
                             alignItems="center"
                           >
-                            <Text color="white" fontSize="$5" fontWeight="700">
+                            <Text color="white" fontSize="$5" fontWeight="700" fontFamily={fontFamily}>
                               {getFirstLetter(displayName)}
                             </Text>
                           </YStack>
                         )}
                         <YStack flex={1}>
-                          <Text color="white" fontSize="$4" fontWeight={hasUnread && !isSelected ? "800" : "600"} numberOfLines={1}>
+                          <Text color="white" fontSize="$4" fontWeight={hasUnread && !isSelected ? "800" : "600"} numberOfLines={1} fontFamily={fontFamily}>
                             {displayName}
                           </Text>
-                          <Text color={hasUnread && !isSelected ? "#b9bbbe" : "#72767d"} fontSize="$2">
+                          <Text color={hasUnread && !isSelected ? "#9CA3AF" : "#6B7280"} fontSize="$2" fontFamily={fontFamily}>
                             {hasUnread && !isSelected ? "New message" : "Direct Message"}
                           </Text>
                         </YStack>
@@ -340,20 +342,20 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                             width={14}
                             height={14}
                             borderRadius={7}
-                            backgroundColor="#f04747"
+                            backgroundColor="#EF4444"
                             borderWidth={2}
-                            borderColor="#202225"
+                            borderColor="#2D2E3F"
                           />
                         )}
                         <YStack
                           width={56}
                           height={56}
                           borderRadius={isSelected ? 16 : 28}
-                          backgroundColor={isSelected ? "#5865F2" : "#2f3136"}
+                          backgroundColor={isSelected ? "#0EA5E9" : "#171823"}
                           justifyContent="center"
                           alignItems="center"
                           hoverStyle={{ borderRadius: 16 }}
-                          pressStyle={{ backgroundColor: "#5865F2", scale: 0.95 }}
+                          pressStyle={{ backgroundColor: "#0EA5E9", scale: 0.95 }}
                         >
                           {iconUrl ? (
                             <Image
@@ -361,7 +363,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                               style={{ width: 48, height: 48, borderRadius: isSelected ? 12 : 24 }}
                             />
                           ) : (
-                            <Text color="white" fontSize="$4" fontWeight="700">
+                            <Text color="white" fontSize="$4" fontWeight="700" fontFamily={fontFamily}>
                               {getFirstLetter(displayName)}
                             </Text>
                           )}
@@ -377,9 +379,9 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
             {(conversations.length > 0 || true) && (
               <YStack alignItems="center" paddingVertical="$1">
                 {isMobile ? (
-                  <Separator borderColor="#40444b" width="100%" />
+                  <Separator borderColor="#2D2E3F" width="100%" />
                 ) : (
-                  <Separator borderColor="#40444b" width={36} />
+                  <Separator borderColor="#2D2E3F" width={36} />
                 )}
               </YStack>
             )}
@@ -392,11 +394,11 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                 circular={!isMobile}
                 size={isMobile ? "$4" : "$5"}
                 width={isMobile ? "100%" : undefined}
-                backgroundColor="#5865F2"
+                backgroundColor="#0EA5E9"
                 onPress={() => setModalVisible(true)}
                 icon={<Plus size={isMobile ? 20 : 24} color="white" />}
                 pressStyle={{
-                  backgroundColor: "#4752C4",
+                  backgroundColor: "#0284C7",
                 }}
               >
                 {isMobile && "Add Server"}
@@ -416,7 +418,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                 >
                   {isMobile ? (
                     <XStack
-                      backgroundColor={isSelected ? "#5865F2" : (hasServerUnread && !isSelected ? "#2a2d31" : "#2f3136")}
+                      backgroundColor={isSelected ? "#0EA5E9" : (hasServerUnread && !isSelected ? "#1A1B26" : "#171823")}
                       padding="$3"
                       borderRadius="$3"
                       alignItems="center"
@@ -433,7 +435,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                           width={12}
                           height={12}
                           borderRadius={6}
-                          backgroundColor="#f04747"
+                          backgroundColor="#EF4444"
                         />
                       )}
                       {server.icon_url ? (
@@ -446,11 +448,11 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                           width={48}
                           height={48}
                           borderRadius={24}
-                          backgroundColor="#5865F2"
+                          backgroundColor="#0EA5E9"
                           justifyContent="center"
                           alignItems="center"
                         >
-                          <Text color="white" fontSize="$5" fontWeight="700">
+                          <Text color="white" fontSize="$5" fontWeight="700" fontFamily={fontFamily}>
                             {getFirstLetter(server.name)}
                           </Text>
                         </YStack>
@@ -461,6 +463,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                           fontSize="$4"
                           fontWeight={hasServerUnread && !isSelected ? "800" : "600"}
                           numberOfLines={1}
+                          fontFamily={fontFamily}
                         >
                           {server.name}
                         </Text>
@@ -478,23 +481,23 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                           width={14}
                           height={14}
                           borderRadius={7}
-                          backgroundColor="#f04747"
+                          backgroundColor="#EF4444"
                           borderWidth={2}
-                          borderColor="#202225"
+                          borderColor="#2D2E3F"
                         />
                       )}
                       <YStack
                         width={56}
                         height={56}
                         borderRadius={isSelected ? 16 : 28}
-                        backgroundColor={isSelected ? "#5865F2" : "#2f3136"}
+                        backgroundColor={isSelected ? "#0EA5E9" : "#171823"}
                         justifyContent="center"
                         alignItems="center"
                         hoverStyle={{
                           borderRadius: 16,
                         }}
                         pressStyle={{
-                          backgroundColor: "#5865F2",
+                          backgroundColor: "#0EA5E9",
                           scale: 0.95,
                         }}
                       >
@@ -512,6 +515,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
                             color="white"
                             fontSize="$4"
                             fontWeight="700"
+                            fontFamily={fontFamily}
                           >
                             {getFirstLetter(server.name)}
                           </Text>
@@ -525,7 +529,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
 
             {servers.length === 0 && conversations.length === 0 && isMobile && (
               <YStack padding="$4" alignItems="center">
-                <Text color="#72767d" fontSize="$3" textAlign="center">
+                <Text color="#6B7280" fontSize="$3" textAlign="center" fontFamily={fontFamily}>
                   Add friends or create a server to get started!
                 </Text>
               </YStack>
@@ -545,14 +549,14 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
             <Button
               circular
               size="$5"
-              backgroundColor="#2f3136"
+              backgroundColor="#171823"
               onPress={() => setSettingsOpen(true)}
               icon={<Settings size={20} color="white" />}
               hoverStyle={{
-                backgroundColor: "#40444b",
+                backgroundColor: "#2D2E3F",
               }}
               pressStyle={{
-                backgroundColor: "#40444b",
+                backgroundColor: "#2D2E3F",
                 scale: 0.95,
               }}
             />
@@ -563,17 +567,17 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
             paddingBottom={insets.bottom + 40}
             paddingTop="$3"
             borderTopWidth={1}
-            borderTopColor="#18191c"
-            backgroundColor="#202225"
+            borderTopColor="#1A1B26"
+            backgroundColor="#2D2E3F"
           >
             <Button
               size="$4"
               width="100%"
-              backgroundColor="#2f3136"
+              backgroundColor="#171823"
               onPress={() => setSettingsOpen(true)}
               icon={<Settings size={20} color="white" />}
               pressStyle={{
-                backgroundColor: "#40444b",
+                backgroundColor: "#2D2E3F",
               }}
             >
               Settings
@@ -607,92 +611,94 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
           <Card
             width={isMobile ? "100%" : "90%"}
             maxWidth={500}
-            backgroundColor="#2f3136"
+            backgroundColor="#171823"
             padding={isMobile ? "$5" : "$4"}
             borderRadius="$4"
           >
             <YStack gap="$4">
               <XStack justifyContent="space-between" alignItems="center">
-                <Text fontSize={isMobile ? "$7" : "$6"} fontWeight="700" color="white">
+                <Text fontSize={isMobile ? "$7" : "$6"} fontWeight="700" color="white" fontFamily={fontFamily}>
                   Add a Server
                 </Text>
                 <TouchableOpacity onPress={() => setModalVisible(false)}>
-                  <X size={24} color="#b9bbbe" />
+                  <X size={24} color="#9CA3AF" />
                 </TouchableOpacity>
               </XStack>
 
               <YStack gap="$3">
-                <Text fontSize={isMobile ? "$5" : "$4"} fontWeight="600" color="#b9bbbe">
+                <Text fontSize={isMobile ? "$5" : "$4"} fontWeight="600" color="#9CA3AF" fontFamily={fontFamily}>
                   Create a New Server
                 </Text>
                 <Input
                   placeholder="Enter server name"
                   value={newServerName}
                   onChangeText={setNewServerName}
-                  backgroundColor="#40444b"
+                  backgroundColor="#2D2E3F"
                   borderWidth={0}
                   color="white"
                   fontSize={isMobile ? "$4" : "$3"}
                   padding="$3"
                   autoFocus
+                  fontFamily={fontFamily}
                 />
                 <Button
-                  backgroundColor="#5865F2"
+                  backgroundColor="#0EA5E9"
                   onPress={createNewServer}
                   size={isMobile ? "$4" : "$3"}
                   disabled={!newServerName.trim()}
                   disabledStyle={{ opacity: 0.5 }}
-                  pressStyle={{ backgroundColor: "#4752C4" }}
+                  pressStyle={{ backgroundColor: "#0284C7" }}
                 >
                   Create Server
                 </Button>
               </YStack>
 
               <XStack alignItems="center" gap="$3">
-                <Separator flex={1} borderColor="#40444b" />
-                <Text color="#72767d" fontSize="$2">OR</Text>
-                <Separator flex={1} borderColor="#40444b" />
+                <Separator flex={1} borderColor="#2D2E3F" />
+                <Text color="#6B7280" fontSize="$2" fontFamily={fontFamily}>OR</Text>
+                <Separator flex={1} borderColor="#2D2E3F" />
               </XStack>
 
               <YStack gap="$3">
-                <Text fontSize={isMobile ? "$5" : "$4"} fontWeight="600" color="#b9bbbe">
+                <Text fontSize={isMobile ? "$5" : "$4"} fontWeight="600" color="#9CA3AF" fontFamily={fontFamily}>
                   Join an Existing Server
                 </Text>
                 <Input
                   placeholder="Paste invite token or link"
                   value={inviteUrl}
                   onChangeText={setInviteUrl}
-                  backgroundColor="#40444b"
+                  backgroundColor="#2D2E3F"
                   borderWidth={0}
                   color="white"
                   fontSize={isMobile ? "$4" : "$3"}
                   padding="$3"
                   autoCapitalize="none"
                   autoCorrect={false}
+                  fontFamily={fontFamily}
                 />
                 <Button
                   backgroundColor="transparent"
                   borderWidth={1}
-                  borderColor="#5865F2"
+                  borderColor="#0EA5E9"
                   onPress={joinServer}
                   size={isMobile ? "$4" : "$3"}
                   disabled={!inviteUrl.trim()}
                   disabledStyle={{ opacity: 0.5 }}
-                  pressStyle={{ backgroundColor: "rgba(88,101,242,0.1)" }}
+                  pressStyle={{ backgroundColor: "rgba(14,165,233,0.1)" }}
                 >
                   Join Server
                 </Button>
               </YStack>
 
               <Button
-                backgroundColor="#40444b"
+                backgroundColor="#2D2E3F"
                 onPress={() => {
                   setModalVisible(false);
                   setNewServerName("");
                   setInviteUrl("");
                 }}
                 size={isMobile ? "$4" : "$3"}
-                pressStyle={{ backgroundColor: "#202225" }}
+                pressStyle={{ backgroundColor: "#2D2E3F" }}
               >
                 Cancel
               </Button>
@@ -709,7 +715,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
           left={isMobile ? 16 : "50%"}
           transform={isMobile ? undefined : [{ translateX: -150 }]}
           width={isMobile ? width - 32 : 300}
-          backgroundColor="#323232"
+          backgroundColor="#252636"
           padding={isMobile ? "$4" : "$3"}
           borderRadius="$4"
           shadowColor="black"
@@ -721,7 +727,7 @@ const ServerSidebar: React.FC<ServerSidebarProps> = ({
             y: 20,
           }}
         >
-          <Text color="white" fontSize={isMobile ? "$4" : "$3"}>{snackbarMessage}</Text>
+          <Text color="white" fontSize={isMobile ? "$4" : "$3"} fontFamily={fontFamily}>{snackbarMessage}</Text>
         </Card>
       )}
     </>

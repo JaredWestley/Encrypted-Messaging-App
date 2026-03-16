@@ -14,7 +14,9 @@ import {
   X as CloseIcon,
   Download,
 } from "@tamagui/lucide-icons";
+import { asBlob } from "html-docx-js-typescript";
 import type { CollabDocumentData, DocumentVersionData } from "../../../../../utils/api";
+import { usePreferences } from "../../../../../utils/PreferencesContext";
 
 interface RemoteCursor {
   userId: number;
@@ -22,7 +24,7 @@ interface RemoteCursor {
   offset: number;
 }
 
-const CURSOR_COLORS = ["#ED4245", "#5865F2", "#43B581", "#FAA61A", "#FF6B6B", "#4ECDC4", "#9B59B6", "#E91E63"];
+const CURSOR_COLORS = ["#EF4444", "#0EA5E9", "#10B981", "#F59E0B", "#FF6B6B", "#4ECDC4", "#9B59B6", "#E91E63"];
 
 interface DocumentEditorProps {
   document: CollabDocumentData;
@@ -98,6 +100,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   onCursorBroadcast,
   remoteCursors,
 }) => {
+  const { fontFamily } = usePreferences();
   // Content is stored in a ref (NOT state) to avoid re-rendering the contentEditable div
   const contentRef = useRef("");
   // Native-only: use state for TextInput (controlled component is fine for native)
@@ -168,18 +171,31 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
     setHasChanges(false);
   }, [onSave]);
 
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback(async () => {
     if (Platform.OS !== "web") return;
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${doc.title}</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:24px;max-width:800px;margin:0 auto;line-height:1.6;color:#333;}</style></head><body>${contentRef.current}</body></html>`;
-    const blob = new Blob([html], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const a = window.document.createElement("a");
-    a.href = url;
-    a.download = `${doc.title.replace(/[^a-z0-9]/gi, "_")}.html`;
-    window.document.body.appendChild(a);
-    a.click();
-    window.document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      const blob = await asBlob(html) as Blob;
+      const url = URL.createObjectURL(blob);
+      const a = window.document.createElement("a");
+      a.href = url;
+      a.download = `${doc.title.replace(/[^a-z0-9]/gi, "_")}.docx`;
+      window.document.body.appendChild(a);
+      a.click();
+      window.document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Fallback to HTML if DOCX conversion fails
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const a = window.document.createElement("a");
+      a.href = url;
+      a.download = `${doc.title.replace(/[^a-z0-9]/gi, "_")}.html`;
+      window.document.body.appendChild(a);
+      a.click();
+      window.document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   }, [doc.title]);
 
   // Web-only: Execute formatting commands on contentEditable
@@ -300,30 +316,30 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
   }, [remoteCursors]);
 
   return (
-    <YStack flex={1} backgroundColor="#36393f">
+    <YStack flex={1} backgroundColor="#1E1F2B">
       {/* Toolbar */}
       <XStack
         paddingHorizontal="$3"
         paddingVertical="$2"
-        backgroundColor="#2f3136"
+        backgroundColor="#171823"
         borderBottomWidth={1}
-        borderBottomColor="#202225"
+        borderBottomColor="#2D2E3F"
         alignItems="center"
         justifyContent="space-between"
         flexWrap="wrap"
         gap="$1"
       >
         <XStack alignItems="center" gap="$2" flex={1}>
-          <Text color="white" fontSize={14} fontWeight="600" numberOfLines={1}>
+          <Text color="white" fontSize={14} fontWeight="600" numberOfLines={1} fontFamily={fontFamily}>
             {doc.title}
           </Text>
           {hasChanges && (
-            <Text color="#FAA61A" fontSize={11}>
+            <Text color="#F59E0B" fontSize={11} fontFamily={fontFamily}>
               (unsaved)
             </Text>
           )}
           {isSaving && (
-            <Text color="#43B581" fontSize={11}>
+            <Text color="#10B981" fontSize={11} fontFamily={fontFamily}>
               Saving...
             </Text>
           )}
@@ -334,25 +350,25 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
           {Platform.OS === "web" && (
             <>
               <Button size="$2" backgroundColor="transparent" onPress={() => execCommand("bold")}>
-                <Bold size={14} color="#b9bbbe" />
+                <Bold size={14} color="#9CA3AF" />
               </Button>
               <Button size="$2" backgroundColor="transparent" onPress={() => execCommand("italic")}>
-                <Italic size={14} color="#b9bbbe" />
+                <Italic size={14} color="#9CA3AF" />
               </Button>
               <Button size="$2" backgroundColor="transparent" onPress={() => execCommand("insertUnorderedList")}>
-                <List size={14} color="#b9bbbe" />
+                <List size={14} color="#9CA3AF" />
               </Button>
               <Button size="$2" backgroundColor="transparent" onPress={() => execCommand("formatBlock", "h2")}>
-                <Heading size={14} color="#b9bbbe" />
+                <Heading size={14} color="#9CA3AF" />
               </Button>
               <Button size="$2" backgroundColor="transparent" onPress={() => execCommand("formatBlock", "pre")}>
-                <Code size={14} color="#b9bbbe" />
+                <Code size={14} color="#9CA3AF" />
               </Button>
               <Button size="$2" backgroundColor="transparent" onPress={() => execCommand("undo")}>
-                <Undo2 size={14} color="#b9bbbe" />
+                <Undo2 size={14} color="#9CA3AF" />
               </Button>
               <Button size="$2" backgroundColor="transparent" onPress={() => execCommand("redo")}>
-                <Redo2 size={14} color="#b9bbbe" />
+                <Redo2 size={14} color="#9CA3AF" />
               </Button>
             </>
           )}
@@ -362,28 +378,28 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
               size="$2"
               backgroundColor="transparent"
               borderWidth={1}
-              borderColor="#5865F2"
+              borderColor="#0EA5E9"
               onPress={onShowVersions}
-              icon={<Clock size={14} color="#5865F2" />}
+              icon={<Clock size={14} color="#0EA5E9" />}
             >
-              {!isMobile && <Text color="#5865F2" fontSize={11}>Versions</Text>}
+              {!isMobile && <Text color="#0EA5E9" fontSize={11} fontFamily={fontFamily}>Versions</Text>}
             </Button>
           )}
 
           <Button
             size="$2"
-            backgroundColor="#5865F2"
+            backgroundColor="#0EA5E9"
             onPress={handleSave}
             disabled={!hasChanges || isSaving}
             opacity={!hasChanges ? 0.5 : 1}
             icon={<Save size={14} color="white" />}
           >
-            {!isMobile && <Text color="white" fontSize={11}>Save</Text>}
+            {!isMobile && <Text color="white" fontSize={11} fontFamily={fontFamily}>Save</Text>}
           </Button>
 
           {Platform.OS === "web" && (
             <Button size="$2" backgroundColor="transparent" onPress={handleExport}>
-              <Download size={14} color="#43B581" />
+              <Download size={14} color="#10B981" />
             </Button>
           )}
 
@@ -392,7 +408,7 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
             backgroundColor="transparent"
             onPress={onClose}
           >
-            <CloseIcon size={16} color="#b9bbbe" />
+            <CloseIcon size={16} color="#9CA3AF" />
           </Button>
         </XStack>
       </XStack>
@@ -411,12 +427,12 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
               style={{
                 minHeight: "100%",
                 padding: 24,
-                color: "#dcddde",
+                color: "#D1D5DB",
                 fontSize: 15,
                 lineHeight: 1.6,
                 fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
                 outline: "none",
-                backgroundColor: "#36393f",
+                backgroundColor: "#1E1F2B",
               }}
             />
             {/* Remote cursor overlay */}
@@ -440,12 +456,12 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({
             value={nativeContent}
             onChangeText={handleNativeContentChange}
             placeholder="Start typing..."
-            placeholderTextColor="#72767d"
+            placeholderTextColor="#6B7280"
             style={{
               flex: 1,
               minHeight: 400,
               padding: 16,
-              color: "#dcddde",
+              color: "#D1D5DB",
               fontSize: 15,
               lineHeight: 24,
               textAlignVertical: "top",

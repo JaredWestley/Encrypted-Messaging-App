@@ -7,7 +7,7 @@ export default function Index() {
 
   if (isLoading) {
     return (
-      <YStack flex={1} backgroundColor="#36393f" justifyContent="center" alignItems="center">
+      <YStack flex={1} backgroundColor="#1E1F2B" justifyContent="center" alignItems="center">
         <Spinner color="white" size="large" />
       </YStack>
     );

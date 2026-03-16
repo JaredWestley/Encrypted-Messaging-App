@@ -13,6 +13,7 @@ class User(SQLModel, table=True):
     password: str
     icon_url: Optional[str]
     public_key: Optional[str] = Field(default=None)  # Base64-encoded X25519 public key
+    bio: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     memberships: List["ServerMembership"] = Relationship(back_populates="user")
 
@@ -35,6 +36,9 @@ class Message(SQLModel, table=True):
     nonce: Optional[str] = Field(default=None)  # Base64-encoded nonce
     sender_public_key: Optional[str] = Field(default=None)  # Base64 sender public key
     attachment_id: Optional[int] = Field(default=None, foreign_key="attachment.id")
+    reply_to_id: Optional[int] = Field(default=None)
+    ai_summary: Optional[str] = Field(default=None)
+    ai_thinking: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -46,6 +50,7 @@ class Server(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     owner_id: int = Field(foreign_key="user.id")
     icon_url: Optional[str] = None
+    slow_mode_seconds: int = Field(default=0)
 
     messages: List["Message"] = Relationship(
         back_populates="server", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
@@ -183,6 +188,9 @@ class DirectMessage(SQLModel, table=True):
     nonce: Optional[str] = Field(default=None)  # Base64-encoded nonce
     sender_public_key: Optional[str] = Field(default=None)  # Base64 sender public key
     attachment_id: Optional[int] = Field(default=None, foreign_key="attachment.id")
+    reply_to_id: Optional[int] = Field(default=None)
+    ai_summary: Optional[str] = Field(default=None)
+    ai_thinking: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     conversation: "Conversation" = Relationship(back_populates="messages")
@@ -256,3 +264,14 @@ class DocumentVersion(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     document: "CollabDocument" = Relationship(back_populates="versions")
+
+
+# ─── Message Reactions ───────────────────────────────────────────
+
+class MessageReaction(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    message_id: Optional[int] = Field(default=None, foreign_key="message.id", index=True)
+    dm_message_id: Optional[int] = Field(default=None, foreign_key="directmessage.id", index=True)
+    user_id: int = Field(foreign_key="user.id")
+    emoji: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)

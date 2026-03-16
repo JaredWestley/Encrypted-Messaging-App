@@ -19,6 +19,7 @@ from app.models import (
     Friendship, Conversation, ConversationMember, DirectMessage, ServerKey,
     Attachment, VoiceChannel,
     CollabDocument, DocumentVersion,
+    MessageReaction,
 )
 from app.database import get_session, engine
 from app.auth import (
@@ -26,12 +27,14 @@ from app.auth import (
     validate_password_strength, SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from app.utils.permissions import is_server_owner, has_permission
+from app.utils.sanitize import sanitize_message, sanitize_username, sanitize_server_name, sanitize_channel_name, sanitize_bio, sanitize_document_title
 from app.websocket_manager import manager
 from datetime import timedelta, datetime, timezone
 from jose import JWTError, jwt
 from app.rate_limit import limiter
 from sqlalchemy.orm import joinedload
 import os
+import httpx
 from uuid import uuid4
 
 router = APIRouter()
@@ -142,6 +145,21 @@ async def send_message(
             has_permission(current_user, message.server_id, "SEND_MESSAGES", session)):
         raise HTTPException(status_code=403, detail="You don't have permission to send messages")
 
+    # Slow mode enforcement
+    server = session.get(Server, message.server_id)
+    if server and server.slow_mode_seconds > 0:
+        last_msg = session.exec(
+            select(Message).where(
+                Message.server_id == message.server_id,
+                Message.user_id == current_user.id
+            ).order_by(Message.created_at.desc())
+        ).first()
+        if last_msg:
+            elapsed = (datetime.utcnow() - last_msg.created_at).total_seconds()
+            remaining = server.slow_mode_seconds - elapsed
+            if remaining > 0:
+                raise HTTPException(status_code=429, detail=f"Slow mode active. Wait {int(remaining)} seconds.")
+
     # Validate attachment if provided
     attachment_data = None
     if message.attachment_id:
@@ -156,20 +174,37 @@ async def send_message(
             "encryption_nonce": att.encryption_nonce,
         }
 
+    # Sanitise content if not encrypted (encrypted = base64 ciphertext, must not be altered)
+    msg_content = message.content if message.is_encrypted else sanitize_message(message.content)
+
     # Proceed to create the message
     db_message = Message(
-        content=message.content,
+        content=msg_content,
         user_id=current_user.id,  # use authenticated user
         server_id=message.server_id,
         is_encrypted=message.is_encrypted,
         nonce=message.nonce,
         sender_public_key=message.sender_public_key,
         attachment_id=message.attachment_id,
+        reply_to_id=message.reply_to_id,
         created_at=message.created_at or datetime.utcnow()
     )
     session.add(db_message)
     session.commit()
     session.refresh(db_message)
+
+    # Build reply_to preview if replying to a message
+    reply_to_data = None
+    if db_message.reply_to_id:
+        original_msg = session.get(Message, db_message.reply_to_id)
+        if original_msg:
+            original_user = session.get(User, original_msg.user_id)
+            reply_to_data = {
+                "id": original_msg.id,
+                "content": original_msg.content,
+                "username": original_user.username if original_user else "Unknown",
+                "user_id": original_msg.user_id,
+            }
 
     # Broadcast new message to all WebSocket clients in this server (except sender)
     ws_msg = {
@@ -185,6 +220,8 @@ async def send_message(
             "nonce": db_message.nonce,
             "sender_public_key": db_message.sender_public_key,
             "attachment": attachment_data,
+            "reply_to_id": db_message.reply_to_id,
+            "reply_to": reply_to_data,
         }
     }
     await manager.broadcast_to_server(message.server_id, ws_msg, exclude_user_id=current_user.id)
@@ -204,7 +241,7 @@ async def send_message(
                 "username": current_user.username,
             })
 
-    return {"detail": "Message sent", "message_id": db_message.id}
+    return {"detail": "Message sent", "message_id": db_message.id, "reply_to": reply_to_data}
 
 @router.put("/messages/{message_id}")
 async def edit_message(
@@ -224,7 +261,9 @@ async def edit_message(
         # # check if user has permission to edit messages in this server
         raise HTTPException(status_code=403, detail="You can only edit your own messages")
 
-    db_message.content = message.content
+    db_message.content = message.content if db_message.is_encrypted else sanitize_message(message.content)
+    db_message.ai_summary = None
+    db_message.ai_thinking = None
     session.add(db_message)
     session.commit()
     session.refresh(db_message)
@@ -316,7 +355,20 @@ async def load_messages(
             "nonce": msg.nonce,
             "sender_public_key": msg.sender_public_key,
             "attachment": None,
+            "reply_to_id": msg.reply_to_id,
+            "reply_to": None,
+            "reactions": get_message_reactions(session, message_id=msg.id),
         }
+        if msg.reply_to_id:
+            original_msg = session.get(Message, msg.reply_to_id)
+            if original_msg:
+                original_user = session.get(User, original_msg.user_id)
+                entry["reply_to"] = {
+                    "id": original_msg.id,
+                    "content": original_msg.content,
+                    "username": original_user.username if original_user else "Unknown",
+                    "user_id": original_msg.user_id,
+                }
         if msg.attachment_id:
             att = session.get(Attachment, msg.attachment_id)
             if att:
@@ -363,9 +415,13 @@ def get_available_permissions():
         "VIEW_CHANNEL",
         "SEND_MESSAGES",
         "MANAGE_ROLES",
+        "MANAGE_SERVER",
+        "MANAGE_CHANNELS",
         "KICK_MEMBERS",
         "BAN_MEMBERS",
         "DELETE_MESSAGES",
+        "SEND_REACTIONS",
+        "USE_AI_SUMMARY",
     ]
 
 # Roles
@@ -639,7 +695,7 @@ def create_server(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    db_server = Server(name=server.name, owner_id=current_user.id)
+    db_server = Server(name=sanitize_server_name(server.name), owner_id=current_user.id)
     session.add(db_server)
     session.commit()
     session.refresh(db_server)
@@ -683,10 +739,16 @@ async def rename_server(
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
 
-    if not data.name.strip():
-        raise HTTPException(400, "Server name cannot be empty")
+    if data.name is not None:
+        if not data.name.strip():
+            raise HTTPException(400, "Server name cannot be empty")
+        server.name = sanitize_server_name(data.name)
 
-    server.name = data.name.strip()
+    if data.slow_mode_seconds is not None:
+        if data.slow_mode_seconds not in (0, 5, 10, 30, 60):
+            raise HTTPException(400, "Invalid slow mode value")
+        server.slow_mode_seconds = data.slow_mode_seconds
+
     session.add(server)
     session.commit()
     session.refresh(server)
@@ -697,9 +759,10 @@ async def rename_server(
         "server_id": server_id,
         "name": server.name,
         "icon_url": server.icon_url,
+        "slow_mode_seconds": server.slow_mode_seconds,
     })
 
-    return {"detail": "Server renamed successfully", "name": server.name}
+    return {"detail": "Server updated successfully", "name": server.name, "slow_mode_seconds": server.slow_mode_seconds}
 
 
 @router.delete("/servers/{server_id}")
@@ -739,20 +802,26 @@ def list_servers(
     session: Session = Depends(get_session)
 ):
     # Subquery to find banned server IDs for the current user
-    banned_server_ids = session.exec(
+    banned_server_ids = list(session.exec(
         select(ServerBan.server_id).where(ServerBan.user_id == current_user.id)
-    ).all()
-    banned_server_ids = [sid for (sid,) in banned_server_ids]  # unpack from tuples if needed
+    ).all())
 
     # Main query to get only servers the user is a member of and not banned from
-    servers = session.exec(
-        select(Server)
-        .join(ServerMembership, Server.id == ServerMembership.server_id)
-        .where(
-            (ServerMembership.user_id == current_user.id) &
-            (Server.id.not_in(banned_server_ids))
-        )
-    ).all()
+    if banned_server_ids:
+        servers = session.exec(
+            select(Server)
+            .join(ServerMembership, Server.id == ServerMembership.server_id)
+            .where(
+                (ServerMembership.user_id == current_user.id) &
+                (Server.id.not_in(banned_server_ids))
+            )
+        ).all()
+    else:
+        servers = session.exec(
+            select(Server)
+            .join(ServerMembership, Server.id == ServerMembership.server_id)
+            .where(ServerMembership.user_id == current_user.id)
+        ).all()
 
     return servers
 
@@ -1494,7 +1563,20 @@ async def get_conversation_messages(
             "sender_public_key": msg.sender_public_key,
             "created_at": msg.created_at.isoformat(),
             "attachment": None,
+            "reply_to_id": msg.reply_to_id,
+            "reply_to": None,
+            "reactions": get_message_reactions(session, dm_message_id=msg.id),
         }
+        if msg.reply_to_id:
+            original_dm = session.get(DirectMessage, msg.reply_to_id)
+            if original_dm:
+                original_user = session.get(User, original_dm.user_id)
+                entry["reply_to"] = {
+                    "id": original_dm.id,
+                    "content": original_dm.content,
+                    "username": original_user.username if original_user else "Unknown",
+                    "user_id": original_dm.user_id,
+                }
         if msg.attachment_id:
             att = session.get(Attachment, msg.attachment_id)
             if att:
@@ -1549,18 +1631,33 @@ async def send_dm(
             "sender_file_key_nonce": att.sender_file_key_nonce,
         }
 
+    dm_content = body.content if body.is_encrypted else sanitize_message(body.content)
     dm = DirectMessage(
         conversation_id=conversation_id,
         user_id=current_user.id,
-        content=body.content,
+        content=dm_content,
         is_encrypted=body.is_encrypted,
         nonce=body.nonce,
         sender_public_key=body.sender_public_key,
         attachment_id=body.attachment_id,
+        reply_to_id=body.reply_to_id,
     )
     session.add(dm)
     session.commit()
     session.refresh(dm)
+
+    # Build reply_to preview if replying to a message
+    reply_to_data = None
+    if dm.reply_to_id:
+        original_dm = session.get(DirectMessage, dm.reply_to_id)
+        if original_dm:
+            original_user = session.get(User, original_dm.user_id)
+            reply_to_data = {
+                "id": original_dm.id,
+                "content": original_dm.content,
+                "username": original_user.username if original_user else "Unknown",
+                "user_id": original_dm.user_id,
+            }
 
     msg_data = DirectMessageRead(
         id=dm.id,
@@ -1596,6 +1693,8 @@ async def send_dm(
                     "sender_public_key": dm.sender_public_key,
                     "created_at": dm.created_at.isoformat(),
                     "attachment": attachment_data,
+                    "reply_to_id": dm.reply_to_id,
+                    "reply_to": reply_to_data,
                 },
             })
 
@@ -1617,7 +1716,9 @@ async def edit_dm(
     if msg.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Can only edit your own messages")
 
-    msg.content = body.content
+    msg.content = body.content if msg.is_encrypted else sanitize_message(body.content)
+    msg.ai_summary = None
+    msg.ai_thinking = None
     session.add(msg)
     session.commit()
 
@@ -1714,7 +1815,20 @@ async def sync_dm_messages(
             "sender_public_key": msg.sender_public_key,
             "created_at": msg.created_at.isoformat(),
             "attachment": None,
+            "reply_to_id": msg.reply_to_id,
+            "reply_to": None,
+            "reactions": get_message_reactions(session, dm_message_id=msg.id),
         }
+        if msg.reply_to_id:
+            original_dm = session.get(DirectMessage, msg.reply_to_id)
+            if original_dm:
+                original_user = session.get(User, original_dm.user_id)
+                entry["reply_to"] = {
+                    "id": original_dm.id,
+                    "content": original_dm.content,
+                    "username": original_user.username if original_user else "Unknown",
+                    "user_id": original_dm.user_id,
+                }
         if msg.attachment_id:
             att = session.get(Attachment, msg.attachment_id)
             if att:
@@ -1910,7 +2024,7 @@ async def get_server_member_public_keys(
 @router.post("/auth/register", status_code=201)
 def register(user: UserCreate, session: Session = Depends(get_session)):
     # Validate username format
-    username = user.username.strip()
+    username = sanitize_username(user.username)
     if len(username) < 3 or len(username) > 32:
         raise HTTPException(status_code=400, detail="Username must be between 3 and 32 characters.")
     if not username.replace("_", "").replace("-", "").isalnum():
@@ -2073,7 +2187,7 @@ def update_user_info(
         existing = session.exec(select(User).where(User.username == data.username)).first()
         if existing:
             raise HTTPException(400, detail="Username already taken")
-        current_user.username = data.username
+        current_user.username = sanitize_username(data.username)
         updated = True
 
     if data.email and data.email != current_user.email:
@@ -2090,6 +2204,10 @@ def update_user_info(
         current_user.password = hash_password(data.new_password)
         updated = True
 
+    if data.bio is not None:
+        current_user.bio = sanitize_bio(data.bio)
+        updated = True
+
     if not updated:
         raise HTTPException(400, detail="No valid fields provided for update")
 
@@ -2103,6 +2221,7 @@ def update_user_info(
             "id": current_user.id,
             "username": current_user.username,
             "email": current_user.email,
+            "bio": current_user.bio,
         }
     }
 
@@ -2271,7 +2390,20 @@ async def sync_messages(
             "nonce": msg.nonce,
             "sender_public_key": msg.sender_public_key,
             "attachment": None,
+            "reply_to_id": msg.reply_to_id,
+            "reply_to": None,
+            "reactions": get_message_reactions(session, message_id=msg.id),
         }
+        if msg.reply_to_id:
+            original_msg = session.get(Message, msg.reply_to_id)
+            if original_msg:
+                original_user = session.get(User, original_msg.user_id)
+                entry["reply_to"] = {
+                    "id": original_msg.id,
+                    "content": original_msg.content,
+                    "username": original_user.username if original_user else "Unknown",
+                    "user_id": original_msg.user_id,
+                }
         if msg.attachment_id:
             att = session.get(Attachment, msg.attachment_id)
             if att:
@@ -2288,6 +2420,256 @@ async def sync_messages(
                 }
         results.append(entry)
     return results
+
+
+# ─── Reactions ───────────────────────────────────────────────────
+
+def get_message_reactions(session: Session, message_id: int = None, dm_message_id: int = None):
+    #Aggregate reactions for a message into [{emoji, count, users: [{user_id, username}]}]
+    if message_id:
+        reactions = session.exec(
+            select(MessageReaction).where(MessageReaction.message_id == message_id)
+        ).all()
+    else:
+        reactions = session.exec(
+            select(MessageReaction).where(MessageReaction.dm_message_id == dm_message_id)
+        ).all()
+
+    emoji_map = {}
+    for r in reactions:
+        if r.emoji not in emoji_map:
+            emoji_map[r.emoji] = {"emoji": r.emoji, "count": 0, "users": []}
+        user = session.get(User, r.user_id)
+        emoji_map[r.emoji]["count"] += 1
+        emoji_map[r.emoji]["users"].append({
+            "user_id": r.user_id,
+            "username": user.username if user else "Unknown"
+        })
+
+    return list(emoji_map.values())
+
+
+@router.post("/messages/{message_id}/reactions")
+async def toggle_reaction(
+    message_id: int,
+    body: dict = Body(...),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Toggle a reaction on a server message."""
+    emoji = body.get("emoji", "").strip()
+    if not emoji or len(emoji) > 8:
+        raise HTTPException(400, "Invalid emoji")
+
+    msg = session.get(Message, message_id)
+    if not msg:
+        raise HTTPException(404, "Message not found")
+
+    # Check SEND_REACTIONS permission
+    if not (is_server_owner(current_user, msg.server_id, session) or
+            has_permission(current_user, msg.server_id, "SEND_REACTIONS", session)):
+        raise HTTPException(403, "No permission to react")
+
+    # Check if reaction already exists
+    existing = session.exec(
+        select(MessageReaction).where(
+            MessageReaction.message_id == message_id,
+            MessageReaction.user_id == current_user.id,
+            MessageReaction.emoji == emoji
+        )
+    ).first()
+
+    if existing:
+        session.delete(existing)
+        session.commit()
+        action = "removed"
+    else:
+        reaction = MessageReaction(message_id=message_id, user_id=current_user.id, emoji=emoji)
+        session.add(reaction)
+        session.commit()
+        action = "added"
+
+    # Get updated reactions for this message
+    reactions = get_message_reactions(session, message_id=message_id)
+
+    # Broadcast
+    await manager.broadcast_to_server(msg.server_id, {
+        "type": "reaction_updated",
+        "message_id": message_id,
+        "reactions": reactions,
+    })
+
+    return {"action": action, "reactions": reactions}
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/reactions")
+async def toggle_dm_reaction(
+    conversation_id: int,
+    message_id: int,
+    body: dict = Body(...),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Toggle a reaction on a DM message."""
+    emoji = body.get("emoji", "").strip()
+    if not emoji or len(emoji) > 8:
+        raise HTTPException(400, "Invalid emoji")
+
+    # Verify membership
+    membership = session.exec(
+        select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.user_id == current_user.id
+        )
+    ).first()
+    if not membership:
+        raise HTTPException(403, "Not a member of this conversation")
+
+    msg = session.get(DirectMessage, message_id)
+    if not msg or msg.conversation_id != conversation_id:
+        raise HTTPException(404, "Message not found")
+
+    # Check if reaction already exists
+    existing = session.exec(
+        select(MessageReaction).where(
+            MessageReaction.dm_message_id == message_id,
+            MessageReaction.user_id == current_user.id,
+            MessageReaction.emoji == emoji
+        )
+    ).first()
+
+    if existing:
+        session.delete(existing)
+        session.commit()
+        action = "removed"
+    else:
+        reaction = MessageReaction(dm_message_id=message_id, user_id=current_user.id, emoji=emoji)
+        session.add(reaction)
+        session.commit()
+        action = "added"
+
+    # Get updated reactions for this message
+    reactions = get_message_reactions(session, dm_message_id=message_id)
+
+    # Broadcast to all conversation members
+    members = session.exec(
+        select(ConversationMember).where(
+            ConversationMember.conversation_id == conversation_id
+        )
+    ).all()
+    for m in members:
+        await manager.send_to_user(m.user_id, {
+            "type": "dm_reaction_updated",
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+            "reactions": reactions,
+        })
+
+    return {"action": action, "reactions": reactions}
+
+
+# ─── AI Message Summary ─────────────────────────────────────────
+
+MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
+MINIMAX_API_URL = "https://api.minimax.io/anthropic/v1/messages"
+
+@router.post("/messages/summarize")
+async def summarize_message(
+    request: Request,
+    body: dict = Body(...),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    # Summarise a message using AI, I used MiniMax but it could be swapped to another that uses the anthropic api format. Caches the result on the message row.
+    content = body.get("content", "").strip()
+    message_id = body.get("message_id")
+    is_dm = body.get("is_dm", False)
+
+    if not content:
+        raise HTTPException(400, "No content provided")
+    if len(content) > 20000:
+        raise HTTPException(400, "Content too long for summarisation")
+
+    # Permission check for server messages
+    if not is_dm:
+        if message_id is not None:
+            msg = session.get(Message, message_id)
+            if msg:
+                if not (is_server_owner(current_user, msg.server_id, session) or
+                        has_permission(current_user, msg.server_id, "USE_AI_SUMMARY", session)):
+                    raise HTTPException(403, "No permission to use AI summary")
+
+    # Check for cached summary
+    if message_id is not None:
+        if is_dm:
+            msg_row = session.get(DirectMessage, message_id)
+        else:
+            msg_row = session.get(Message, message_id)
+        if msg_row and msg_row.ai_summary:
+            return {"summary": msg_row.ai_summary, "thinking": msg_row.ai_thinking or "", "cached": True}
+    else:
+        msg_row = None
+
+    if not MINIMAX_API_KEY or MINIMAX_API_KEY == "your_minimax_api_key_here":
+        raise HTTPException(503, "AI summarisation is not configured – add your MINIMAX_API_KEY to .env")
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                MINIMAX_API_URL,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": MINIMAX_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                },
+                json={
+                    "model": "MiniMax-M2.5",
+                    "max_tokens": 16000,
+                    "system": (
+                        "You are a concise summariser. "
+                        "Summarise the following chat message(s) in 1-3 short sentences. "
+                        "Keep the key information and tone. Reply ONLY with the summary."
+                    ),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [{"type": "text", "text": content}],
+                        },
+                    ],
+                    "temperature": 0.5,
+                    "thinking": {
+                        "type": "enabled",
+                        "budget_tokens": 10000,
+                    },
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            # Anthropic format: content is a list of blocks (thinking + text)
+            summary = ""
+            thinking = ""
+            for block in data.get("content", []):
+                if block.get("type") == "thinking":
+                    thinking += block.get("thinking", "")
+                elif block.get("type") == "text":
+                    summary += block.get("text", "")
+            if not summary:
+                raise HTTPException(502, "No summary text in API response")
+
+            # Cache the result on the message row
+            if msg_row:
+                msg_row.ai_summary = summary
+                msg_row.ai_thinking = thinking
+                session.add(msg_row)
+                session.commit()
+
+            return {"summary": summary, "thinking": thinking, "cached": False}
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"MiniMax API error: {e.response.status_code}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Failed to generate summary: {str(e)}")
 
 
 # ─── File Attachments ────────────────────────────────────────────
@@ -2551,7 +2933,7 @@ async def create_voice_channel(server_id: int, data: VoiceChannelCreate, session
     existing = session.exec(select(VoiceChannel).where(VoiceChannel.server_id == server_id)).all()
     max_pos = max((ch.position for ch in existing), default=-1)
 
-    channel = VoiceChannel(server_id=server_id, name=data.name, user_limit=data.user_limit, position=max_pos + 1)
+    channel = VoiceChannel(server_id=server_id, name=sanitize_channel_name(data.name), user_limit=data.user_limit, position=max_pos + 1)
     session.add(channel)
     session.commit()
     session.refresh(channel)
@@ -2920,10 +3302,9 @@ async def websocket_endpoint(websocket: WebSocket, server_id: int):
                     user_list = []
                     with Session(engine) as session:
                         for uid in users_in_channel:
-                            if uid != user_id:
-                                u = session.get(User, uid)
-                                if u:
-                                    user_list.append({"id": u.id, "username": u.username})
+                            u = session.get(User, uid)
+                            if u:
+                                user_list.append({"id": u.id, "username": u.username})
                     await websocket.send_json({
                         "type": "voice_channel_users", "channel_id": channel_id,
                         "users": user_list,
@@ -3049,7 +3430,7 @@ async def create_server_document(
 
     now = datetime.utcnow()
     document = CollabDocument(
-        title=doc.title,
+        title=sanitize_document_title(doc.title),
         doc_type=doc.doc_type,
         server_id=server_id,
         created_by=current_user.id,
@@ -3124,7 +3505,7 @@ async def create_conversation_document(
 
     now = datetime.utcnow()
     document = CollabDocument(
-        title=doc.title,
+        title=sanitize_document_title(doc.title),
         doc_type=doc.doc_type,
         conversation_id=conversation_id,
         created_by=current_user.id,
@@ -3252,7 +3633,7 @@ async def update_document(
         if not member:
             raise HTTPException(403, "Access denied")
 
-    doc.title = update.title
+    doc.title = sanitize_document_title(update.title)
     doc.updated_at = datetime.utcnow()
     session.add(doc)
     session.commit()

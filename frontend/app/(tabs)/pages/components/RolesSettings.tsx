@@ -12,16 +12,19 @@ import {
   assignRole,
   unassignRole,
 } from "../../../../utils/api";
+import { usePreferences } from "../../../../utils/PreferencesContext";
 
 const PERMISSION_LABELS: Record<string, string> = {
   VIEW_CHANNEL: "View Channel",
   SEND_MESSAGES: "Send Messages",
   MANAGE_ROLES: "Manage Roles",
   MANAGE_SERVER: "Manage Server",
+  MANAGE_CHANNELS: "Manage Channels",
   KICK_MEMBERS: "Kick Members",
   BAN_MEMBERS: "Ban Members",
   DELETE_MESSAGES: "Delete Messages",
-  MANAGE_CHANNELS: "Manage Channels",
+  SEND_REACTIONS: "Send Reactions",
+  USE_AI_SUMMARY: "Use AI Summary",
 };
 
 interface Role {
@@ -44,6 +47,7 @@ interface RolesSettingsProps {
 }
 
 const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }) => {
+  const { fontSizeValue, fontFamily } = usePreferences();
   const { width } = useWindowDimensions();
   const isMobile = width < 600;
 
@@ -224,29 +228,30 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
 
   // Render the role list (sidebar on desktop, full view on mobile when no role selected)
   const renderRoleList = () => (
-    <YStack flex={isMobile && !selectedRoleId ? 1 : undefined} width={isMobile ? "100%" : 200} backgroundColor="#202225" padding="$2">
-      <Text fontSize="$5" fontWeight="700" color="white" marginBottom="$2">
+    <YStack flex={isMobile && !selectedRoleId ? 1 : undefined} width={isMobile ? "100%" : 200} backgroundColor="#2D2E3F" padding="$2">
+      <Text fontSize="$5" fontWeight="700" color="white" marginBottom="$2" fontFamily={fontFamily}>
         Roles ({roles.length})
       </Text>
       <YStack marginTop="$2" marginBottom="$2" gap="$2">
         <Input
           placeholder="New role name"
           //@ts-ignore
-          placeholderTextColor="#72767d"
+          placeholderTextColor="#6B7280"
           value={newRoleName}
           onChangeText={setNewRoleName}
-          backgroundColor="#40444b"
+          backgroundColor="#2D2E3F"
           borderWidth={0}
           color="white"
           fontSize="$3"
+          fontFamily={fontFamily}
         />
         <Button
-          backgroundColor="#5865F2"
+          backgroundColor="#0EA5E9"
           onPress={createRole}
           disabled={saving || !newRoleName.trim()}
           disabledStyle={{ opacity: 0.5 }}
           size="$3"
-          pressStyle={{ backgroundColor: "#4752C4" }}
+          pressStyle={{ backgroundColor: "#0284C7" }}
         >
           Create Role
         </Button>
@@ -255,20 +260,20 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
         <YStack gap="$1">
           {roles.map((role) => (
             <YStack>
-              <Separator backgroundColor="#40444b" marginBottom="$1" marginTop="$1"/>
+              <Separator backgroundColor="#2D2E3F" marginBottom="$1" marginTop="$1"/>
             <TouchableOpacity key={role.id} onPress={() => setSelectedRoleId(role.id)}>
               <YStack
                 padding="$3"
-                backgroundColor={role.id === selectedRoleId ? "#5865F2" : "transparent"}
+                backgroundColor={role.id === selectedRoleId ? "#0EA5E9" : "transparent"}
                 borderRadius="$2"
               >
                 <XStack alignItems="center" gap="$1">
-                  <Text color="white" fontSize="$3">{role.name}</Text>
+                  <Text color="white" fontSize="$3" fontFamily={fontFamily}>{role.name}</Text>
                   {role.is_default && (
-                    <Text color="#5865F2" fontSize="$1" fontWeight="600">(Default)</Text>
+                    <Text color="#0EA5E9" fontSize="$1" fontWeight="600" fontFamily={fontFamily}>(Default)</Text>
                   )}
                 </XStack>
-                <Text color={role.id === selectedRoleId ? "rgba(255,255,255,0.7)" : "#72767d"} fontSize="$1">
+                <Text color={role.id === selectedRoleId ? "rgba(255,255,255,0.7)" : "#6B7280"} fontSize="$1" fontFamily={fontFamily}>
                   {role.users?.length || 0} members · {role.permissions?.length || 0} permissions
                 </Text>
               </YStack>
@@ -278,7 +283,7 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
 
           {roles.length === 0 && (
             <YStack padding="$3">
-              <Text color="#72767d" fontSize="$3" textAlign="center">
+              <Text color="#6B7280" fontSize="$3" textAlign="center" fontFamily={fontFamily}>
                 No roles yet
               </Text>
             </YStack>
@@ -293,26 +298,26 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
     if (!selectedRole) {
       return (
         <YStack flex={1} justifyContent="center" alignItems="center" padding="$4">
-          <Text color="#72767d" fontSize="$4">Select a role to edit</Text>
+          <Text color="#6B7280" fontSize="$4" fontFamily={fontFamily}>Select a role to edit</Text>
         </YStack>
       );
     }
 
     return (
-      <ScrollView flex={1} backgroundColor="#2f3136" padding="$3">
+      <ScrollView flex={1} backgroundColor="#171823" padding="$3">
         <YStack gap="$3">
           {/* Back button on mobile */}
           {isMobile && (
             <TouchableOpacity onPress={() => setSelectedRoleId(null)}>
               <XStack alignItems="center" gap="$2">
-                <ChevronLeft size={20} color="#b9bbbe" />
-                <Text color="#b9bbbe" fontSize="$3">Back to roles</Text>
+                <ChevronLeft size={20} color="#9CA3AF" />
+                <Text color="#9CA3AF" fontSize="$3" fontFamily={fontFamily}>Back to roles</Text>
               </XStack>
             </TouchableOpacity>
           )}
 
           {/* Role Name + Delete */}
-          <Text fontSize="$4" fontWeight="600" color="white">
+          <Text fontSize="$4" fontWeight="600" color="white" fontFamily={fontFamily}>
             Role Name
           </Text>
           <XStack alignItems="center" gap="$2">
@@ -320,15 +325,16 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
               flex={1}
               value={selectedRole.name}
               onChangeText={updateRoleName}
-              backgroundColor="#202225"
+              backgroundColor="#2D2E3F"
               borderWidth={0}
               color="white"
               fontSize="$4"
+              fontFamily={fontFamily}
             />
             <Button
               circular
               size="$4"
-              backgroundColor={selectedRole.is_default ? "#555" : "#f04747"}
+              backgroundColor={selectedRole.is_default ? "#4B5563" : "#EF4444"}
               icon={<Trash2 size={18} color="white" />}
               onPress={selectedRole.is_default ? () => RNAlert.alert("Cannot Delete", "The default role cannot be deleted.") : deleteRole}
               disabled={saving || selectedRole.is_default}
@@ -340,10 +346,10 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
 
           {/* Permissions */}
           <YStack gap="$2">
-            <Text fontSize="$4" fontWeight="600" color="white" marginBottom="$2">
+            <Text fontSize="$4" fontWeight="600" color="white" marginBottom="$2" fontFamily={fontFamily}>
               Permissions
             </Text>
-            <YStack backgroundColor="#202225" padding="$2" borderRadius="$2" gap="$1">
+            <YStack backgroundColor="#2D2E3F" padding="$2" borderRadius="$2" gap="$1">
               {availablePermissions.map((perm) => {
                 const active = selectedRole.permissions.includes(perm);
                 return (
@@ -360,14 +366,14 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
                         height={22}
                         borderRadius={4}
                         borderWidth={2}
-                        borderColor={active ? "#5865F2" : "#72767d"}
-                        backgroundColor={active ? "#5865F2" : "transparent"}
+                        borderColor={active ? "#0EA5E9" : "#6B7280"}
+                        backgroundColor={active ? "#0EA5E9" : "transparent"}
                         justifyContent="center"
                         alignItems="center"
                       >
                         {active && <Check size={14} color="white" />}
                       </YStack>
-                      <Text color="white" fontSize="$3">
+                      <Text color="white" fontSize="$3" fontFamily={fontFamily}>
                         {PERMISSION_LABELS[perm] || perm}
                       </Text>
                     </XStack>
@@ -381,10 +387,10 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
 
           {/* Assigned Users */}
           <YStack gap="$2">
-            <Text fontSize="$4" fontWeight="600" color="white" marginBottom="$2">
+            <Text fontSize="$4" fontWeight="600" color="white" marginBottom="$2" fontFamily={fontFamily}>
               Assigned Users
             </Text>
-            <YStack backgroundColor="#202225" padding="$2" borderRadius="$2" gap="$1">
+            <YStack backgroundColor="#2D2E3F" padding="$2" borderRadius="$2" gap="$1">
               {users.map((user) => {
                 const assigned = selectedRole.users?.some((u) => u.id === user.id) ?? false;
                 return (
@@ -401,14 +407,14 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
                         height={22}
                         borderRadius={4}
                         borderWidth={2}
-                        borderColor={assigned ? "#5865F2" : "#72767d"}
-                        backgroundColor={assigned ? "#5865F2" : "transparent"}
+                        borderColor={assigned ? "#0EA5E9" : "#6B7280"}
+                        backgroundColor={assigned ? "#0EA5E9" : "transparent"}
                         justifyContent="center"
                         alignItems="center"
                       >
                         {assigned && <Check size={14} color="white" />}
                       </YStack>
-                      <Text color="white" fontSize="$3">
+                      <Text color="white" fontSize="$3" fontFamily={fontFamily}>
                         {user.username}
                       </Text>
                     </XStack>
@@ -416,7 +422,7 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
                 );
               })}
               {users.length === 0 && (
-                <Text color="#72767d" fontSize="$3" padding="$2">
+                <Text color="#6B7280" fontSize="$3" padding="$2" fontFamily={fontFamily}>
                   No members in this server
                 </Text>
               )}
@@ -425,11 +431,11 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
 
           {/* Save Button */}
           <Button
-            backgroundColor="#5865F2"
+            backgroundColor="#0EA5E9"
             onPress={saveRole}
             disabled={saving}
             size="$4"
-            pressStyle={{ backgroundColor: "#4752C4" }}
+            pressStyle={{ backgroundColor: "#0284C7" }}
             marginTop="$2"
           >
             {saving ? "Saving..." : "Save Changes"}
@@ -446,8 +452,8 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
         <YStack flex={1}>
           {renderRoleDetail()}
           {snackbarVisible && (
-            <YStack position="absolute" bottom={20} alignSelf="center" backgroundColor="#323232" padding="$3" borderRadius="$3">
-              <Text color="white">{snackbarMessage}</Text>
+            <YStack position="absolute" bottom={20} alignSelf="center" backgroundColor="#252636" padding="$3" borderRadius="$3">
+              <Text color="white" fontFamily={fontFamily}>{snackbarMessage}</Text>
             </YStack>
           )}
         </YStack>
@@ -457,8 +463,8 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
       <YStack flex={1}>
         {renderRoleList()}
         {snackbarVisible && (
-          <YStack position="absolute" bottom={20} alignSelf="center" backgroundColor="#323232" padding="$3" borderRadius="$3">
-            <Text color="white">{snackbarMessage}</Text>
+          <YStack position="absolute" bottom={20} alignSelf="center" backgroundColor="#252636" padding="$3" borderRadius="$3">
+            <Text color="white" fontFamily={fontFamily}>{snackbarMessage}</Text>
           </YStack>
         )}
       </YStack>
@@ -471,8 +477,8 @@ const RolesSettings: React.FC<RolesSettingsProps> = ({ serverId, token, logout }
       {renderRoleList()}
       {renderRoleDetail()}
       {snackbarVisible && (
-        <YStack position="absolute" bottom={20} alignSelf="center" backgroundColor="#323232" padding="$3" borderRadius="$3" zIndex={100}>
-          <Text color="white">{snackbarMessage}</Text>
+        <YStack position="absolute" bottom={20} alignSelf="center" backgroundColor="#252636" padding="$3" borderRadius="$3" zIndex={100}>
+          <Text color="white" fontFamily={fontFamily}>{snackbarMessage}</Text>
         </YStack>
       )}
     </XStack>

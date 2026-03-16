@@ -7,6 +7,7 @@ interface User {
   username: string;
   email: string;
   icon_url: string;
+  bio?: string;
 }
 
 interface ServerUser {
@@ -119,6 +120,7 @@ export async function updateUserSettings(
     email?: string;
     current_password?: string;
     new_password?: string;
+    bio?: string;
   },
   token: string,
   logout: () => void
@@ -158,7 +160,8 @@ export async function sendMessage(
   serverId: number,
   userId: number,
   logout: () => void,
-  encryption?: { is_encrypted: boolean; nonce: string; sender_public_key: string; attachment_id?: number }
+  encryption?: { is_encrypted: boolean; nonce: string; sender_public_key: string; attachment_id?: number },
+  reply_to_id?: number
 ) {
   const body: any = { content, server_id: serverId, user_id: userId };
   if (encryption) {
@@ -167,6 +170,7 @@ export async function sendMessage(
     body.sender_public_key = encryption.sender_public_key;
     if (encryption.attachment_id) body.attachment_id = encryption.attachment_id;
   }
+  if (reply_to_id) body.reply_to_id = reply_to_id;
   return apiRequest(`${API_URL}/messages`, {
     method: "POST",
     headers: {
@@ -484,6 +488,48 @@ export async function renameServer(
 }
 
 
+export async function updateServerSettings(
+  token: string,
+  serverId: number,
+  settings: { slow_mode_seconds?: number },
+  logout: () => void
+): Promise<{ detail: string }> {
+  return apiRequest<{ detail: string }>(
+    `${API_URL}/servers/${serverId}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(settings),
+    },
+    logout
+  );
+}
+
+export async function toggleReaction(
+  token: string,
+  messageId: number,
+  emoji: string,
+  isDm: boolean,
+  conversationId: number | null,
+  logout: () => void
+) {
+  if (isDm && conversationId) {
+    return apiRequest(`${API_URL}/conversations/${conversationId}/messages/${messageId}/reactions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ emoji }),
+    }, logout);
+  }
+  return apiRequest(`${API_URL}/messages/${messageId}/reactions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ emoji }),
+  }, logout);
+}
+
 export async function deleteServer(
   token: string,
   serverId: number,
@@ -659,7 +705,8 @@ export async function sendDirectMessage(
   conversationId: number,
   content: string,
   logout: () => void,
-  encryption?: { is_encrypted: boolean; nonce: string; sender_public_key: string; attachment_id?: number }
+  encryption?: { is_encrypted: boolean; nonce: string; sender_public_key: string; attachment_id?: number },
+  reply_to_id?: number
 ): Promise<DirectMessageData> {
   const body: any = { content };
   if (encryption) {
@@ -668,6 +715,7 @@ export async function sendDirectMessage(
     body.sender_public_key = encryption.sender_public_key;
     if (encryption.attachment_id) body.attachment_id = encryption.attachment_id;
   }
+  if (reply_to_id) body.reply_to_id = reply_to_id;
   return apiRequest<DirectMessageData>(`${API_URL}/conversations/${conversationId}/messages`, {
     method: "POST",
     headers: {
@@ -1116,6 +1164,29 @@ export async function fetchDocumentVersion(
   return apiRequest<DocumentVersionData>(
     `${API_URL}/documents/${documentId}/versions/${versionId}`,
     { headers: { Authorization: `Bearer ${token}` } },
+    logout
+  );
+}
+
+// ─── AI Message Summary ─────────────────────────────────────────
+
+export async function summarizeMessage(
+  token: string,
+  content: string,
+  messageId: number,
+  isDm: boolean,
+  logout: () => void
+): Promise<{ summary: string; thinking: string; cached: boolean }> {
+  return apiRequest<{ summary: string; thinking: string; cached: boolean }>(
+    `${API_URL}/messages/summarize`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ content, message_id: messageId, is_dm: isDm }),
+    },
     logout
   );
 }
