@@ -34,6 +34,11 @@ The application consists of:
 - [🖥️ Running the Project Locally](#️-running-the-project-locally)
   - [Run the Frontend](#1️⃣-run-the-frontend)
   - [Run the Backend](#2️⃣-run-the-backend)
+- [🐳 Running with Docker](#-running-with-docker)
+  - [Prerequisites — Install Docker](#prerequisites--install-docker)
+  - [Running the App](#-running-the-app)
+  - [Useful Docker Commands](#-useful-docker-commands)
+  - [Troubleshooting](#️-troubleshooting)
 - [📡 API Overview](#-api-overview)
 - [🧪 Development Requirements](#-development-requirements)
 
@@ -150,6 +155,152 @@ uvicorn main:app --reload
 #Or if you want other devices to be able to communicate with the backend.
 uvicorn main:app --reload --host 0.0.0.0
 ```
+
+---
+
+# 🐳 Running with Docker
+
+Docker lets you run the entire app (frontend + backend) in isolated containers with a single command — no need to install Node.js, Python, or any dependencies manually.
+
+## Prerequisites — Install Docker
+
+You only need **one thing installed**: Docker Desktop (which includes both `docker` and `docker compose`).
+
+### 🍎 macOS
+
+1. Go to [https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/)
+2. Click **Download for Mac** (choose **Apple Silicon** if you have an M1/M2/M3/M4 Mac, or **Intel** for older Macs)
+   - Not sure which? Click the Apple logo top-left → **About This Mac** → look for "Apple M..." or "Intel"
+3. Open the downloaded `.dmg` file
+4. Drag **Docker** into **Applications**
+5. Open **Docker Desktop** from Applications — it will ask for your password to finish setup
+6. Wait until the Docker icon in the menu bar shows a steady state (not animating)
+7. Open **Terminal** and verify it works:
+   ```bash
+   docker --version
+   docker compose version
+   ```
+   You should see version numbers for both. If you get "command not found", restart your terminal.
+
+### 🪟 Windows
+
+1. **Enable WSL 2** (Windows Subsystem for Linux) — Docker needs this:
+   - Open **PowerShell as Administrator** (right-click Start → "Terminal (Admin)" or "PowerShell (Admin)")
+   - Run:
+     ```powershell
+     wsl --install
+     ```
+   - **Restart your computer** when prompted
+   - After reboot, a Ubuntu window may open asking you to create a username/password — do so (this is just for WSL, pick anything)
+2. Go to [https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/)
+3. Click **Download for Windows**
+4. Run the installer (`.exe` file) — keep all defaults, make sure **"Use WSL 2"** is checked
+5. **Restart your computer** if prompted
+6. Open **Docker Desktop** — let it finish starting up (the whale icon in the system tray should stop animating)
+7. Open **Command Prompt** or **PowerShell** and verify:
+   ```powershell
+   docker --version
+   docker compose version
+   ```
+   Both should return version numbers. If not, restart your terminal or PC.
+
+### 🐧 Linux (Ubuntu/Debian)
+
+1. Open a terminal and run these commands one by one:
+   ```bash
+   # Update your package list
+   sudo apt update
+
+   # Install prerequisites
+   sudo apt install -y ca-certificates curl gnupg
+
+   # Add Docker's official GPG key
+   sudo install -m 0755 -d /etc/apt/keyrings
+   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+   sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+   # Add Docker's repository
+   echo \
+     "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+     $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+     sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+   # Install Docker Engine + Compose
+   sudo apt update
+   sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+   ```
+
+2. Allow your user to run Docker without `sudo`:
+   ```bash
+   sudo usermod -aG docker $USER
+   ```
+   **Log out and log back in** (or restart) for this to take effect.
+
+3. Verify installation:
+   ```bash
+   docker --version
+   docker compose version
+   ```
+
+> **Fedora/Arch/other distros:** See the [official Docker docs](https://docs.docker.com/engine/install/) for your specific distro.
+
+---
+
+## 🚀 Running the App
+
+1. **Clone the repository** (or download and extract the ZIP):
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/Encrypted-Messaging-App.git
+   cd Encrypted-Messaging-App
+   ```
+
+2. **(Optional) Create a `.env` file** in the project root to customise settings:
+   ```bash
+   # .env (create this file next to docker-compose.yml)
+   SECRET_KEY=your-secret-key-here
+   MINIMAX_API_KEY=your-api-key-here
+   FRONTEND_PORT=3000
+   BACKEND_PORT=8000
+   ```
+   If you skip this step, defaults will be used (which is fine for local testing).
+
+3. **Build and start** both containers:
+   ```bash
+   docker compose up --build
+   ```
+   The first build takes a few minutes (downloading base images and installing dependencies). Subsequent starts are much faster.
+
+4. **Open the app** in your browser:
+   - Frontend: [http://localhost:3000](http://localhost:3000)
+   - Backend API: [http://localhost:8000/docs](http://localhost:8000/docs) (Swagger UI)
+
+5. **Stop the app** by pressing `Ctrl + C` in the terminal, or run:
+   ```bash
+   docker compose down
+   ```
+
+## 🔧 Useful Docker Commands
+
+| Command | What It Does |
+|---|---|
+| `docker compose up --build` | Build images and start the app |
+| `docker compose up -d` | Start in the background (detached) |
+| `docker compose down` | Stop and remove containers |
+| `docker compose logs -f` | View live logs from both services |
+| `docker compose logs backend` | View only backend logs |
+| `docker compose ps` | Check which containers are running |
+| `docker compose down -v` | Stop and **delete all data** (database, uploads) |
+
+## ⚠️ Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| "docker: command not found" | Make sure Docker Desktop is installed and running. Restart your terminal. |
+| "permission denied" on Linux | Run `sudo usermod -aG docker $USER` then **log out and back in**. |
+| Port 3000 or 8000 already in use | Change the ports in your `.env` file: `FRONTEND_PORT=3001` |
+| Containers exit immediately | Check logs with `docker compose logs` for error details. |
+| "WSL 2 is not installed" on Windows | Run `wsl --install` in PowerShell as Admin, then restart. |
+| Changes not showing after code edit | Run `docker compose up --build` to rebuild with your changes. |
 
 ---
 
