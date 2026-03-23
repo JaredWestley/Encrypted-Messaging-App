@@ -271,7 +271,7 @@ You only need **one thing installed**: Docker Desktop (which includes both `dock
 
 4. **Open the app** in your browser:
    - Frontend: [http://localhost:3000](http://localhost:3000)
-   - Backend API: [http://localhost:8000/docs](http://localhost:8000/docs) (Swagger UI)
+   - Backend API: [http://localhost:8000](http://localhost:8000)
 
 5. **Stop the app** by pressing `Ctrl + C` in the terminal, or run:
    ```bash
