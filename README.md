@@ -21,7 +21,6 @@ The application consists of:
 
 - 📱 A React Native (Expo) front-end for web and mobile support.
 - 🧠 A Python-based back-end.
-- 🤖 AI-integrated trading logic.
 
 ---
 
@@ -81,7 +80,7 @@ Blanked for privacy :)
 - 📄 Real-time collaborative document editing
 - 🌐 Cross-platform support (Web + Mobile-ready architecture)
 - 🔑 JWT-based authentication & secure session handling
-- 🏠 Optional self-hosting support
+- 🏠 Self-hosting support
 
 ---
 
