@@ -249,7 +249,7 @@ You only need **one thing installed**: Docker Desktop (which includes both `dock
 
 1. **Clone the repository** (or download and extract the ZIP):
    ```bash
-   git clone [https://github.com/YOUR_USERNAME/Encrypted-Messaging-App.git](https://github.com/JaredWestley/Encrypted-Messaging-App.git)
+   git clone https://github.com/JaredWestley/Encrypted-Messaging-App.git
    cd Encrypted-Messaging-App
    ```
 
