@@ -70,6 +70,10 @@ Blanked for privacy :)
 
 <img width="2704" height="1526" alt="image" src="https://github.com/user-attachments/assets/ece0df28-9374-4713-a9b9-c3cd12c7b99d" />
 
+### AI message summary
+![JZc1gvRGWC](https://github.com/user-attachments/assets/dc1f0207-9a4a-4664-9f93-a0e0c26d0553)
+
+
 ---
 
 ## 🚀 Features
