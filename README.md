@@ -15,7 +15,7 @@
 
 **Encrypted Messaging App** is a privacy-focused, end-to-end encrypted (E2EE) real-time messaging application for web and Mobile supporting text messaging, group communication, media sharing, and peer-to-peer voice/video calls.
 
-This project was developed as my final year project in university exploring secure, accessible and scalable communication systems.
+This project was developed as my final year project in university exploring secure, accessible and scalable communication systems with self hosting support.
 
 The application consists of:
 
@@ -45,18 +45,16 @@ The application consists of:
 
 ## 📸 Images
 ### Login Page
-<img width="2704" height="1536" alt="image" src="https://github.com/user-attachments/assets/abbf6d06-beec-4b00-b36e-3087ecff0652" />
+<img width="2704" height="1532" alt="image" src="https://github.com/user-attachments/assets/8b825bbc-3af7-4cfc-a2c8-6fa7645e73dd" />
 
 ### Server Chat Page
-<img width="2704" height="1532" alt="image" src="https://github.com/user-attachments/assets/2234c0e6-c8fd-472b-a48a-904cd2c719d6" />
+<img width="2704" height="1529" alt="image" src="https://github.com/user-attachments/assets/5513f19f-2069-4a12-b61e-0061f0a3068f" />
 
 ### Add Friends
-<img width="2701" height="1526" alt="image" src="https://github.com/user-attachments/assets/1d65cf13-1f17-486b-9541-fbd6ef9b0904" />
-
-<img width="601" height="773" alt="image" src="https://github.com/user-attachments/assets/1aa37536-8352-4235-9360-7bb0ec12ffac" />
+<img width="2704" height="1534" alt="image" src="https://github.com/user-attachments/assets/14ea7bf2-1035-4949-9283-76170986d8f3" />
 
 ### Server Settings Page
-<img width="2704" height="1527" alt="image" src="https://github.com/user-attachments/assets/02d40749-42e8-479f-8c09-76136c28ebd9" />
+<img width="2704" height="1532" alt="image" src="https://github.com/user-attachments/assets/64bc90d2-9cb0-4a17-8f24-326ed226e29e" />
 
 ### Voice and Voice Calling
 <img width="2704" height="1524" alt="image" src="https://github.com/user-attachments/assets/82cc6a17-da67-4cd1-bc17-d829efa9662f" />
@@ -68,10 +66,9 @@ Blanked for privacy :)
 
 
 ### Collaborative Document and Whiteboard editing
-<img width="2704" height="1530" alt="image" src="https://github.com/user-attachments/assets/ec62b775-b240-479b-a79a-449082482579" />
+<img width="2704" height="1534" alt="image" src="https://github.com/user-attachments/assets/1fbab1a9-650e-4323-ba84-a069f2db2d59" />
 
-<img width="2704" height="1530" alt="image" src="https://github.com/user-attachments/assets/3c328d92-c20f-4416-abca-d7a6719aeac5" />
-
+<img width="2704" height="1526" alt="image" src="https://github.com/user-attachments/assets/ece0df28-9374-4713-a9b9-c3cd12c7b99d" />
 
 ---
 
