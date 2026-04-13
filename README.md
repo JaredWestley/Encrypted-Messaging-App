@@ -1,6 +1,6 @@
 <div align="center">
   
-# 🔐 Encrypted Messaging App
+# 🔐 SecureChat
 
 ### Secure messaging app with collaborative features and Mobile/Web support.
 
@@ -13,37 +13,37 @@
 
 ## 📖 Overview
 
-**Encrypted Messaging App** is a privacy-focused, end-to-end encrypted (E2EE) real-time messaging application for web and Mobile supporting text messaging, group communication, media sharing, and peer-to-peer voice/video calls.
+**SecureChat** is a privacy-focused, end-to-end encrypted (E2EE) real-time messaging application for web and Mobile supporting text messaging, group communication, media sharing, and peer-to-peer voice/video calls.
 
 This project was developed as my final year project in university exploring secure, accessible and scalable communication systems with self hosting support.
 
 The application consists of:
 
-- 📱 A React Native (Expo) front-end for web and mobile support.
-- 🧠 A Python-based back-end.
+- A React Native (Expo) front-end for web and mobile support.
+- A Python-based back-end.
 
 ---
 
-## 📑 Table of Contents
+## Table of Contents
 
-- [📸 Images](#-images)
-- [🚀 Features](#-features)
-- [🏗️ Architecture Overview](#️-architecture-overview)
-- [📂 Project Structure](#-project-structure)
-- [🖥️ Running the Project Locally](#️-running-the-project-locally)
+- [Images](#images)
+- [Features](#features)
+- [Architecture Overview](#architecture-overview)
+- [Project Structure](#project-structure)
+- [Running the Project Locally](#running-the-project-locally)
   - [Run the Frontend](#1️⃣-run-the-frontend)
   - [Run the Backend](#2️⃣-run-the-backend)
-- [🐳 Running with Docker](#-running-with-docker)
+- [Running with Docker](#running-with-docker)
   - [Prerequisites — Install Docker](#prerequisites--install-docker)
-  - [Running the App](#-running-the-app)
-  - [Useful Docker Commands](#-useful-docker-commands)
-  - [Troubleshooting](#️-troubleshooting)
-- [📡 API Overview](#-api-overview)
-- [🧪 Development Requirements](#-development-requirements)
+  - [Running the App](#running-the-app)
+  - [Useful Docker Commands](#useful-docker-commands)
+  - [Troubleshooting](#troubleshooting)
+- [API Overview](#api-overview)
+- [Development Requirements](#development-requirements)
 
 ---
 
-## 📸 Images
+## Images
 ### Login Page
 <img width="2704" height="1532" alt="image" src="https://github.com/user-attachments/assets/8b825bbc-3af7-4cfc-a2c8-6fa7645e73dd" />
 
@@ -76,21 +76,21 @@ Blanked for privacy :)
 
 ---
 
-## 🚀 Features
+## Features
 
-- 🔒 End-to-End Encrypted Messaging (E2EE)
-- 💬 Real-time messaging using WebSockets
-- 👥 Group chats with role-based permissions
-- 📁 Encrypted file and image sharing
-- 📞 Peer-to-peer voice and video calls (WebRTC)
-- 📄 Real-time collaborative document editing
-- 🌐 Cross-platform support (Web + Mobile-ready architecture)
-- 🔑 JWT-based authentication & secure session handling
-- 🏠 Self-hosting support
+- End-to-End Encrypted Messaging (E2EE)
+- Real-time messaging using WebSockets
+- Group chats with role-based permissions
+- Encrypted file and image sharing
+- Peer-to-peer voice and video calls (WebRTC)
+- Real-time collaborative document editing
+- Cross-platform support (Web + Mobile-ready architecture)
+- JWT-based authentication & secure session handling
+- Self-hosting support
 
 ---
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 The system follows a modular **Client → Server → Database** architecture:
 
@@ -104,13 +104,13 @@ All encryption occurs client-side. The backend only routes encrypted payloads an
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 - /frontend → React frontend application
 - /backend → Python FastAPI backend
 
 ---
 
-# 🖥️ Running the Project Locally
+# Running the Project Locally
 
 ## 1️⃣ Run the Frontend
 
@@ -158,7 +158,7 @@ uvicorn main:app --reload --host 0.0.0.0
 
 ---
 
-# 🐳 Running with Docker
+# Running with Docker
 
 Docker lets you run the entire app (frontend + backend) in isolated containers with a single command — no need to install Node.js, Python, or any dependencies manually.
 
@@ -166,7 +166,7 @@ Docker lets you run the entire app (frontend + backend) in isolated containers w
 
 You only need **one thing installed**: Docker Desktop (which includes both `docker` and `docker compose`).
 
-### 🍎 macOS
+### macOS
 
 1. Go to [https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/)
 2. Click **Download for Mac** (choose **Apple Silicon** if you have an M1/M2/M3/M4 Mac, or **Intel** for older Macs)
@@ -182,7 +182,7 @@ You only need **one thing installed**: Docker Desktop (which includes both `dock
    ```
    You should see version numbers for both. If you get "command not found", restart your terminal.
 
-### 🪟 Windows
+### Windows
 
 1. **Enable WSL 2** (Windows Subsystem for Linux) — Docker needs this:
    - Open **PowerShell as Administrator** (right-click Start → "Terminal (Admin)" or "PowerShell (Admin)")
@@ -204,7 +204,7 @@ You only need **one thing installed**: Docker Desktop (which includes both `dock
    ```
    Both should return version numbers. If not, restart your terminal or PC.
 
-### 🐧 Linux (Ubuntu/Debian)
+### Linux (Ubuntu/Debian)
 
 1. Open a terminal and run these commands one by one:
    ```bash
@@ -246,7 +246,7 @@ You only need **one thing installed**: Docker Desktop (which includes both `dock
 
 ---
 
-## 🚀 Running the App
+## Running the App
 
 1. **Clone the repository** (or download and extract the ZIP):
    ```bash
@@ -279,7 +279,7 @@ You only need **one thing installed**: Docker Desktop (which includes both `dock
    docker compose down
    ```
 
-## 🔧 Useful Docker Commands
+## Useful Docker Commands
 
 | Command | What It Does |
 |---|---|
@@ -291,7 +291,7 @@ You only need **one thing installed**: Docker Desktop (which includes both `dock
 | `docker compose ps` | Check which containers are running |
 | `docker compose down -v` | Stop and **delete all data** (database, uploads) |
 
-## ⚠️ Troubleshooting
+## Troubleshooting
 
 | Problem | Solution |
 |---|---|
@@ -304,27 +304,90 @@ You only need **one thing installed**: Docker Desktop (which includes both `dock
 
 ---
 
-## 📡 API Overview
+## API Overview
 
 ### Authentication
 
-- POST /api/auth/register
-- POST /api/auth/login
-- POST /api/auth/logout
+- POST /api/auth/register - Register a new user
+- POST /api/auth/login - Login and receive acess + refresh tokens
+- POST /api/auth/logout - Invalidate current session token
+- POST /api/auth/refresh - Exchange refresh token for new access token
+
+### Users
+- GET /api/users/me - Get current user profile
+- PUT /api/users/me - Update profile (username, bio, etc.)
+- PUT /api/users/me/icon - Upload proile picture
+
+### Servers
+- GET	/api/servers - List all servers the user is in
+- POST	/api/servers - Create a new server
+- GET	/api/servers/{server_id} - Get server details
+- PUT	/api/servers/{server_id} - Update server settings
+- DELETE	/api/servers/{server_id} - Delete a server
+- GET	/api/servers/{server_id}/users - List server members
+- POST	/api/servers/{server_id}/kick - Kick a member
+- POST	/api/servers/{server_id}/ban - Ban a member
+- POST	/api/servers/{server_id}/leave - Leave a server
+- POST	/api/servers/{server_id}/generate-invite - Generate invite link
+- POST	/api/invite/{invite_token} - Join server via invite
+
+### Messages
+- GET	/api/messages - Fetch messages for a server
+- POST	/api/messages - Send a message to a server
+- PUT	/api/messages/{message_id} - Edit a message
+- DELETE	/api/messages/{message_id} - Delete a message
+- POST	/api/messages/{message_id}/reactions - Add a reaction to a message
+- POST	/api/messages/summarize - AI summarise a message thread
+
+### Direct Messages
+- GET	/api/conversations - List all DM conversations
+- POST	/api/conversations - Start a new DM conversation
+- GET	/api/conversations/{conversation_id}/messages - Get messages in a conversation
+- POST	/api/conversations/{conversation_id}/messages - Send a DM
+
+### Friends
+- POST	/api/friends/request - Send a friend request
+- POST	/api/friends/{friendship_id}/accept - Accept a friend request
+- POST	/api/friends/{friendship_id}/reject - Reject a friend request
+- GET	/api/friends - List friends
+
+### Roles & Permissions
+- POST	/api/servers/{server_id}/roles - Create a role
+- PUT	/api/servers/{server_id}/roles/{role_id} - Update a role
+- DELETE	/api/servers/{server_id}/roles/{role_id} - Delete a role
+- POST	/api/servers/{server_id}/roles/assign - Assign a role to a member
+- GET	/api/roles/permissions - List all available permissions
+
+### File Attachments
+- POST	/api/attachments/upload - Upload a file attachment
+- GET	/api/attachments/{attachment_id} - Download an attachment
+
+### Encryption Keys
+- POST	/api/keys/public - Upload user's public key
+- GET	/api/keys/public/{user_id} - Get a user's public key
+- GET	/api/keys/server/{server_id} - Get server encryption key
+- POST	/api/keys/server - Upload server encryption key
+
+### Voice Channels
+- GET	/api/servers/{server_id}/voice-channels - List voice channels in a server
+- POST	/api/servers/{server_id}/voice-channels - Create a voice channel
+- DELETE	/api/voice-channels/{channel_id} - Delete a voice channel
+
+### Collaborative Documents
+- GET	/api/servers/{server_id}/documents - List documents in a server
+- POST	/api/servers/{server_id}/documents - Create a document
+- GET	/api/documents/{document_id} - Get a document
+- PUT	/api/documents/{document_id} - Update a document
+- DELETE	/api/documents/{document_id} - Delete a document
+- GET	/api/documents/{document_id}/versions - List document version history
 
 ### Messaging (WebSocket)
-- /ws/chat
-
-### Conversations
-- GET /api/conversations
-- POST /api/conversations
-
-### Media
-- POST /api/media/upload
+- WS /api/ws/{server_id} - real time server chat connection
+- WS /api/ws/dm - real time direct message connection 
 
 ---
 
-## 🧪 Development Requirements
+## Development Requirements
 
 - Node.js v20.9+
 - Python 3.10+
